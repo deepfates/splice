@@ -1,14 +1,43 @@
 {
   "name": "splice",
-  "version": "1.0.0",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
+  "version": "0.1.0",
+  "description": "splice — convert social/chat exports into normalized threads and export to Markdown and OAI JSONL",
+  "license": "MIT",
   "author": "",
-  "license": "ISC",
-  "description": "",
+  "type": "module",
+  "main": "dist/splice.js",
+  "bin": {
+    "splice": "dist/splice.js"
+  },
+  "scripts": {
+    "start": "tsx splice.ts",
+    "dev": "tsx watch splice.ts",
+    "build": "tsc --target ES2022 --module ES2022 --moduleResolution Bundler --outDir dist splice.ts",
+    "prepare": "npm run build",
+    "test": "echo \"No tests yet\" && exit 0"
+  },
+  "keywords": [
+    "cli",
+    "convert",
+    "twitter",
+    "markdown",
+    "oai",
+    "jsonl",
+    "threads",
+    "export",
+    "archive"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/deepfates/splice.git"
+  },
+  "bugs": {
+    "url": "https://github.com/deepfates/splice/issues"
+  },
+  "homepage": "https://github.com/deepfates/splice#readme",
+  "engines": {
+    "node": ">=18"
+  },
   "devDependencies": {
     "tsx": "^4.20.6",
     "typescript": "^5.9.3"
