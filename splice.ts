@@ -577,7 +577,7 @@ async function writeOAI(
     const record = {
       messages: [{ role: "system", content: systemMessage }, ...msgs],
     };
-    await fh.write(JSON.stringify(record) + "\n", "utf8");
+    await fh.write(JSON.stringify(record) + "\n");
   };
 
   for (const t of threads) await writeConv(t.items);
