@@ -72,6 +72,7 @@ function parseArgs(argv: string[]): CLIOptions {
   };
 
   const args = argv.slice(2);
+  let systemExplicit = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "--help" || a === "-h") {
@@ -98,8 +99,12 @@ function parseArgs(argv: string[]): CLIOptions {
         }
         opts.format = list;
       }
-    } else if (a === "--system-message") {
-      opts.systemMessage = args[++i] ?? opts.systemMessage;
+    } else if (a === "--system-message" || a === "--system") {
+      const val = args[++i];
+      if (val) {
+        opts.systemMessage = val;
+        systemExplicit = true;
+      }
     } else if (a === "--dry-run" || a === "-n") {
       opts.dryRun = true;
     } else if (a === "--log-level") {
@@ -120,6 +125,9 @@ function parseArgs(argv: string[]): CLIOptions {
     } else {
       // positional? ignore for now
     }
+  }
+  if (!systemExplicit && process.env.SPLICE_SYSTEM_MESSAGE) {
+    opts.systemMessage = process.env.SPLICE_SYSTEM_MESSAGE as string;
   }
   return opts;
 }
@@ -618,12 +626,15 @@ async function main() {
     if (opts.format.includes("markdown")) {
       await writeMarkdown(threads, items, outDir, logger, opts.dryRun);
     }
+    const systemMessage =
+      process.env.SPLICE_SYSTEM_MESSAGE ?? opts.systemMessage;
+    logger("debug", `System message: ${systemMessage}`);
     if (opts.format.includes("oai")) {
       await writeOAI(
         threads,
         conversations,
         outDir,
-        opts.systemMessage,
+        systemMessage,
         logger,
         opts.dryRun,
       );
