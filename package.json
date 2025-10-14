@@ -14,7 +14,10 @@
     "dev": "tsx watch splice.ts",
     "build": "tsc --target ES2022 --module ES2022 --moduleResolution Bundler --outDir dist splice.ts",
     "prepare": "npm run build",
-    "test": "echo \"No tests yet\" && exit 0"
+    "test": "vitest run --reporter verbose",
+    "test:watch": "vitest",
+    "test:integration": "vitest run tests/integration/**/*.test.ts --reporter verbose",
+    "clean": "rm -rf dist out"
   },
   "keywords": [
     "cli",
@@ -39,7 +42,10 @@
     "node": ">=18"
   },
   "devDependencies": {
+    "@types/node": "^22.7.4",
+    "execa": "^9.4.0",
     "tsx": "^4.20.6",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.3"
   }
 }
