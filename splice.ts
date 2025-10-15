@@ -153,24 +153,31 @@ function makeLogger(level: Level): (lvl: Level, msg: string) => void {
 
 function usage(): string {
   return [
-    "splice — convert a Twitter archive to Markdown and/or OAI JSONL",
+    "splice — convert a Twitter archive to Markdown, OAI JSONL, and/or JSON",
     "",
     "Usage:",
-    "  splice --source <path> --out <dir> [--format markdown oai] [--system-message <text>] [--dry-run] [--log-level <level>]",
+    "  splice --source <path> --out <dir> [--format markdown oai json] [--system-message <text>] [--dry-run] [--log-level <level>] [--json-stdout] [--quiet|-q] [--verbose] [--version|-V]",
     "",
     "Options:",
     "  --source <path>            Path to the Twitter archive directory",
     "  --out <dir>                Output directory",
-    "  --format <fmt...>          One or more formats: markdown, oai (default: markdown oai)",
-    '  --system-message <text>    System message for OAI JSONL (default: "You have been uploaded to the internet")',
+    "  --format <fmt...>          One or more formats: markdown, oai, json (default: markdown oai)",
+    '  --system, --system-message <text>    System message for OAI JSONL (default: "You have been uploaded to the internet")',
     "  --dry-run, -n              Plan only; don’t write files",
     "  --log-level <level>        debug|info|warn|error (default: info)",
+    "  --json-stdout              Emit normalized items JSONL to stdout (no files); logs to stderr",
+    "  --quiet, -q                Errors only",
+    "  --verbose                  Debug logging",
+    "  --version, -V              Show version",
     "  --help, -h                 Show help",
     "",
     "Examples:",
-    "  splice --source ./archive --out ./out",
-    "  splice --source ./archive --out ./out --format markdown",
+    "  splice --source ./archive --out ./out --format markdown oai json",
     '  splice --source ./archive --out ./out --format oai --system-message "You are helpful."',
+    "  splice --source ./archive --out ./out --json-stdout",
+    "  splice --version",
+    "",
+    "Docs: https://github.com/deepfates/splice • Context: https://deepfates.com/convert-your-twitter-archive-into-training-data",
   ].join("\n");
 }
 
@@ -660,7 +667,78 @@ async function main() {
     process.stdout.write(`splice ${v}\n`);
     process.exit(0);
   }
+  // Allow quick verbosity shorthands unless an explicit --log-level was provided
+  {
+    const argv = process.argv.slice(2);
+    const hasExplicitLogLevel = argv.includes("--log-level");
+    const wantsQuiet = argv.includes("--quiet") || argv.includes("-q");
+    const wantsVerbose = argv.includes("--verbose");
+    if (!hasExplicitLogLevel) {
+      if (wantsQuiet) opts.logLevel = "error";
+      else if (wantsVerbose) opts.logLevel = "debug";
+    }
+  }
+
   const logger = makeLogger(opts.logLevel);
+
+  // Warn on unknown flags with a simple suggestion
+  {
+    const argv = process.argv.slice(2);
+    const known = new Set([
+      "--help",
+      "-h",
+      "--version",
+      "-V",
+      "--source",
+      "--archive-path",
+      "--out",
+      "--output-dir",
+      "--format",
+      "--formats",
+      "--output-formats",
+      "--system-message",
+      "--system",
+      "--dry-run",
+      "-n",
+      "--log-level",
+      "--quiet",
+      "-q",
+      "--verbose",
+      "--json-stdout",
+      "--",
+    ]);
+    const unknown = argv.filter(
+      (a) => a.startsWith("-") && !known.has(a) && a !== "-" && a !== "--",
+    );
+    const candidates = Array.from(known).filter((f) => f.startsWith("--"));
+    const suggest = (flag: string): string | null => {
+      let best: string | null = null;
+      let score = -1;
+      for (const c of candidates) {
+        // simple common prefix score
+        let s = 0;
+        const L = Math.min(flag.length, c.length);
+        for (let i = 0; i < L; i++) {
+          if (flag[i] === c[i]) s++;
+          else break;
+        }
+        if (s > score) {
+          score = s;
+          best = c;
+        }
+      }
+      return score >= 2 ? best : null;
+    };
+    for (const uf of unknown) {
+      const hint = suggest(uf);
+      if (hint) logger("warn", `Unknown flag ${uf}. Did you mean ${hint}?`);
+      else
+        logger(
+          "warn",
+          `Unknown flag ${uf}. Run with --help to see supported flags.`,
+        );
+    }
+  }
 
   if (!opts.source || !opts.out) {
     process.stderr.write(usage() + "\n");
@@ -689,16 +767,49 @@ async function main() {
       `Threads: ${threads.length}, Conversations: ${conversations.length}`,
     );
 
-    if (opts.format.includes("markdown")) {
+    // Validate formats and support --json-stdout for piping normalized items
+    const argv = process.argv.slice(2);
+    const formatSpecified =
+      argv.includes("--format") ||
+      argv.includes("--formats") ||
+      argv.includes("--output-formats");
+    const allowedFormats = new Set(["markdown", "oai", "json"]);
+    const requested = opts.format || [];
+    const validFormats = requested.filter((f) => allowedFormats.has(f));
+    const invalidFormats = requested.filter((f) => !allowedFormats.has(f));
+    for (const bad of invalidFormats) {
+      logger("warn", `Unknown format "${bad}". Supported: markdown, oai, json`);
+    }
+    const jsonStdout = argv.includes("--json-stdout");
+
+    if (jsonStdout) {
+      // Print normalized items as JSONL to stdout; logs remain on stderr
+      for (const it of items) {
+        process.stdout.write(JSON.stringify(it) + "\n");
+      }
+      logger("info", "Wrote normalized items to stdout");
+      process.exit(0);
+    }
+
+    if (formatSpecified && validFormats.length === 0) {
+      logger(
+        "error",
+        "No valid formats requested. Supported: markdown, oai, json",
+      );
+      process.stderr.write(usage() + "\n");
+      process.exit(2);
+    }
+
+    if (validFormats.includes("markdown")) {
       await writeMarkdown(threads, items, outDir, logger, opts.dryRun);
     }
-    if (opts.format.includes("json")) {
+    if (validFormats.includes("json")) {
       await writeNormalizedJSONL(items, outDir, logger, opts.dryRun);
     }
     const systemMessage =
       process.env.SPLICE_SYSTEM_MESSAGE ?? opts.systemMessage;
     logger("debug", `System message: ${systemMessage}`);
-    if (opts.format.includes("oai")) {
+    if (validFormats.includes("oai")) {
       await writeOAI(
         threads,
         conversations,
