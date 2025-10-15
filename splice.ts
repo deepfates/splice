@@ -16,6 +16,7 @@
 import * as fs from "node:fs/promises";
 import * as fssync from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 
 type Level = "debug" | "info" | "warn" | "error";
 
@@ -60,6 +61,7 @@ type CLIOptions = {
   dryRun: boolean;
   logLevel: Level;
   help: boolean;
+  version: boolean;
 };
 
 function parseArgs(argv: string[]): CLIOptions {
@@ -69,6 +71,7 @@ function parseArgs(argv: string[]): CLIOptions {
     dryRun: false,
     logLevel: "info",
     help: false,
+    version: false,
   };
 
   const args = argv.slice(2);
@@ -77,6 +80,8 @@ function parseArgs(argv: string[]): CLIOptions {
     const a = args[i];
     if (a === "--help" || a === "-h") {
       opts.help = true;
+    } else if (a === "--version" || a === "-V") {
+      opts.version = true;
     } else if (a === "--source" || a === "--archive-path") {
       opts.source = args[++i];
     } else if (a === "--out" || a === "--output-dir") {
@@ -608,10 +613,29 @@ async function writeNormalizedJSONL(
 
 /* ---------------------------------- main ---------------------------------- */
 
+async function getVersion(): Promise<string> {
+  try {
+    const thisFile = fileURLToPath(import.meta.url);
+    const dir = path.dirname(thisFile);
+    const root = path.basename(dir) === "dist" ? path.dirname(dir) : dir;
+    const pkgPath = path.join(root, "package.json");
+    const raw = await fs.readFile(pkgPath, "utf8");
+    const pkg = JSON.parse(raw);
+    return typeof pkg.version === "string" ? pkg.version : "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+
 async function main() {
   const opts = parseArgs(process.argv);
   if (opts.help) {
     process.stderr.write(usage() + "\n");
+    process.exit(0);
+  }
+  if (opts.version) {
+    const v = await getVersion();
+    process.stdout.write(`splice ${v}\n`);
     process.exit(0);
   }
   const logger = makeLogger(opts.logLevel);

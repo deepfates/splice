@@ -48,6 +48,7 @@ Help (equivalent to `--help`):
       --dry-run, -n              Plan only; don’t write files
       --log-level <level>        debug|info|warn|error (default: info)
       --help, -h                 Show help
+      --version, -V              Show version
 
     Environment:
       SPLICE_SYSTEM_MESSAGE      Alternative way to set the OAI system message
