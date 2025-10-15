@@ -1,5 +1,5 @@
 {
-  "name": "splice",
+  "name": "@deepfates/splice",
   "version": "0.1.0",
   "description": "splice — convert social/chat exports into normalized threads and export to Markdown and OAI JSONL",
   "license": "MIT",
@@ -38,6 +38,9 @@
     "url": "https://github.com/deepfates/splice/issues"
   },
   "homepage": "https://github.com/deepfates/splice#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=18"
   },
