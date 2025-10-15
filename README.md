@@ -19,7 +19,7 @@ A minimalist CLI to turn your Twitter archive into:
 
 Today it imports Twitter/X. The plan is to splice in other archives (Bluesky, ChatGPT, Reddit, Glowfic, Hugging Face, …) and let you pick the strands you want to weave into a training set.
 
-This library started life as a python script. This is a TypeScript rewrite where development will continue. Versions of this codebase were used in the development of [deeperfates.com](https://deeperfates.com), [keltham.lol](https://keltham.lol) [youaretheassistantnow.com](https://youaretheassistantnow.com) and other personality clones.
+This library started life as a python script. This is a TypeScript rewrite where development will continue. Versions of this codebase were used in the development of [deeperfates.com](https://deeperfates.com), [keltham.lol](https://keltham.lol), [youaretheassistantnow.com](https://youaretheassistantnow.com) and other personality clones.
 
 More context: https://deepfates.com/convert-your-twitter-archive-into-training-data
 
