@@ -195,6 +195,27 @@ async function readJsonFromJs(filePath: string): Promise<any> {
   }
 }
 
+function parseLooseArray(input: string): any[] {
+  // Try strict JSON first
+  try {
+    const parsed = JSON.parse(input);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_) {
+    // Fall through to loose JS evaluation
+  }
+
+  // Attempt to evaluate as a JS array/object literal in a confined context.
+  // cleanJsonString should have removed any "window.* = " prefix so input should be an array expression.
+  try {
+    // eslint-disable-next-line no-new-func
+    const fn = new Function('"use strict"; return (' + input + ");");
+    const result = fn();
+    return Array.isArray(result) ? result : [];
+  } catch (_) {
+    return [];
+  }
+}
+
 function mediaTypeFromExt(filename: string): "photo" | "video" | "unknown" {
   const ext = path.extname(filename).toLowerCase();
   if (ext === ".mp4" || ext === ".mov") return "video";
@@ -305,8 +326,9 @@ async function ingestTwitter(
     for (const f of files) {
       const filePath = path.join(rootPath, f.fileName);
       const raw = await fs.readFile(filePath, "utf8");
-      const data = JSON.parse(cleanJsonString(raw));
-      if (!Array.isArray(data)) continue;
+      const cleaned = cleanJsonString(raw);
+      const data = parseLooseArray(cleaned);
+      if (!Array.isArray(data) || data.length === 0) continue;
 
       for (const item of data) {
         const norm = normalizeTweetLike(
