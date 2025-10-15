@@ -1,4 +1,4 @@
-# splice
+# 🫚 splice
 
 Convert your Twitter/X archive into normalized threads and export to Markdown, OAI JSONL, and/or JSON (normalized items). Single-file TypeScript CLI, human-first, composable.
 
