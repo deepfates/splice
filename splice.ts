@@ -586,6 +586,26 @@ async function writeOAI(
   logger("info", `Wrote OAI JSONL to ${outPath}`);
 }
 
+async function writeNormalizedJSONL(
+  items: ContentItem[],
+  outDir: string,
+  logger: (l: Level, m: string) => void,
+  dryRun: boolean,
+) {
+  const outPath = path.join(outDir, "normalized_items.jsonl");
+  if (dryRun) {
+    logger("info", `(dry-run) would write normalized items JSONL: ${outPath}`);
+    return;
+  }
+  await ensureDir(path.dirname(outPath));
+  const fh = await fs.open(outPath, "w");
+  for (const it of items) {
+    await fh.write(JSON.stringify(it) + "\n");
+  }
+  await fh.close();
+  logger("info", `Wrote normalized items JSONL to ${outPath}`);
+}
+
 /* ---------------------------------- main ---------------------------------- */
 
 async function main() {
@@ -625,6 +645,9 @@ async function main() {
 
     if (opts.format.includes("markdown")) {
       await writeMarkdown(threads, items, outDir, logger, opts.dryRun);
+    }
+    if (opts.format.includes("json")) {
+      await writeNormalizedJSONL(items, outDir, logger, opts.dryRun);
     }
     const systemMessage =
       process.env.SPLICE_SYSTEM_MESSAGE ?? opts.systemMessage;

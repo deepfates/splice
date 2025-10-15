@@ -1,11 +1,12 @@
 # splice
 
-Convert your Twitter/X archive into normalized threads and export to Markdown and/or OAI JSONL. Single-file TypeScript CLI, human-first, composable.
+Convert your Twitter/X archive into normalized threads and export to Markdown, OAI JSONL, and/or JSON (normalized items). Single-file TypeScript CLI, human-first, composable.
 
 - Human-friendly CLI (clig.dev principles)
 - Outputs:
   - Markdown per-thread, plus non-thread tweets grouped by date
   - OAI-compatible JSONL for language model fine-tuning/evaluation
+  - Normalized items JSONL (one item per line, for debugging/inspection)
 - Copies referenced media into an images/ folder
 - Works directly with your Twitter archive (manifest.js + data files)
 
@@ -33,15 +34,15 @@ Dev/watch mode:
 
 Help (equivalent to `--help`):
 
-    splice — convert a Twitter archive to Markdown and/or OAI JSONL
+    splice — convert a Twitter archive to Markdown, OAI JSONL, and/or JSON
 
     Usage:
-      splice --source <path> --out <dir> [--format markdown oai] [--system-message <text>] [--dry-run] [--log-level <level>]
+      splice --source <path> --out <dir> [--format markdown oai json] [--system-message <text>] [--dry-run] [--log-level <level>]
 
     Options:
       --source <path>            Path to the Twitter archive directory
       --out <dir>                Output directory
-      --format <fmt...>          One or more formats: markdown, oai (default: markdown oai)
+      --format <fmt...>          One or more formats: markdown, oai, json (default: markdown oai)
       --system-message <text>    System message for OAI JSONL (default: "You have been uploaded to the internet")
                                  Alias: --system
       --dry-run, -n              Plan only; don’t write files
@@ -75,6 +76,14 @@ OAI only with custom system message:
 
     npx tsx splice.ts --source ~/Downloads/my-twitter-archive --out ./out --format oai --system-message "You are helpful."
 
+JSON only (normalized items):
+
+    npx tsx splice.ts --source ~/Downloads/my-twitter-archive --out ./out --format json
+
+All three formats:
+
+    npx tsx splice.ts --source ~/Downloads/my-twitter-archive --out ./out --format markdown oai json
+
 Use environment variable for system message:
 
     SPLICE_SYSTEM_MESSAGE="Be concise." npx tsx splice.ts --source ~/Downloads/my-twitter-archive --out ./out --format oai
@@ -103,6 +112,7 @@ On a successful run, you’ll see:
 - `out/tweets_by_date/` — one Markdown file per day for non-thread tweets
 - `out/images/` — copied media files referenced by the Markdown
 - `out/conversations_oai.jsonl` — OAI JSONL file with conversations built from threads and reply chains
+- `out/normalized_items.jsonl` — JSONL dump of normalized ContentItem records (one item per line)
 
 Notes:
 - Filenames for threads are derived from the first five words of the top post (sanitized).
@@ -129,6 +139,16 @@ Build (emits `dist/splice.js` and sets up the `splice` bin):
 Run the built CLI:
 
     node dist/splice.js --source /path/to/twitter-archive --out ./out
+
+## Testing
+
+Run the full test suite (includes an integration test that verifies Markdown, OAI JSONL with system message, and normalized JSONL outputs):
+
+    npm test
+
+Watch tests:
+
+    npm run test:watch
 
 ## Roadmap
 
