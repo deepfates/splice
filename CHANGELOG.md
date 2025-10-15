@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 This project follows Conventional Commits and semantic versioning.
 Dates are in YYYY-MM-DD.
 
+## [0.1.1] - 2025-10-15
+
+### Added
+- CLI flags and polish:
+  - `--json-stdout` to stream normalized items as JSONL to stdout (logs to stderr)
+  - `--quiet` (`-q`) and `--verbose` shorthands for log level
+  - Unknown-flag warnings with simple suggestions
+  - Format validation with friendly messages
+- Selection and filtering:
+  - `--since` / `--until` (ISO), `--min-length`, `--exclude-rt`, `--only-threads`, `--with-media`
+- Exports:
+  - ShareGPT export (`--format sharegpt`) to `out/sharegpt.json`
+  - Stats summary (`--stats-json`) to `out/stats.json`
+- Config:
+  - Load defaults via config files using cosmiconfig (e.g., `.splicerc.*`, package.json `"splice"`)
+- Docs/packaging:
+  - README updates and package `"files"` whitelist for a lean npm tarball
+
+### Notes
+- Backward-compatible with v0.1.0.
+
+[0.1.1]: https://github.com/deepfates/splice/releases/tag/v0.1.1
+
 ## [0.1.0] - 2025-10-15
 
 ### Added
