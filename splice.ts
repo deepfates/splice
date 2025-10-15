@@ -62,6 +62,15 @@ type CLIOptions = {
   logLevel: Level;
   help: boolean;
   version: boolean;
+  // filters
+  since?: string;
+  until?: string;
+  minLength: number;
+  excludeRt: boolean;
+  onlyThreads: boolean;
+  withMedia: boolean;
+  // outputs
+  statsJson: boolean;
 };
 
 function parseArgs(argv: string[]): CLIOptions {
@@ -72,6 +81,13 @@ function parseArgs(argv: string[]): CLIOptions {
     logLevel: "info",
     help: false,
     version: false,
+    since: undefined,
+    until: undefined,
+    minLength: 0,
+    excludeRt: false,
+    onlyThreads: false,
+    withMedia: false,
+    statsJson: false,
   };
 
   const args = argv.slice(2);
@@ -122,6 +138,21 @@ function parseArgs(argv: string[]): CLIOptions {
       ) {
         opts.logLevel = lvl;
       }
+    } else if (a === "--since") {
+      opts.since = args[++i];
+    } else if (a === "--until") {
+      opts.until = args[++i];
+    } else if (a === "--min-length") {
+      const v = parseInt(args[++i] ?? "", 10);
+      if (!Number.isNaN(v)) opts.minLength = v;
+    } else if (a === "--exclude-rt") {
+      opts.excludeRt = true;
+    } else if (a === "--only-threads") {
+      opts.onlyThreads = true;
+    } else if (a === "--with-media") {
+      opts.withMedia = true;
+    } else if (a === "--stats-json") {
+      opts.statsJson = true;
     } else if (a === "--") {
       break;
     } else if (a.startsWith("-")) {
@@ -156,14 +187,23 @@ function usage(): string {
     "splice — convert a Twitter archive to Markdown, OAI JSONL, and/or JSON",
     "",
     "Usage:",
-    "  splice --source <path> --out <dir> [--format markdown oai json] [--system-message <text>] [--dry-run] [--log-level <level>] [--json-stdout] [--quiet|-q] [--verbose] [--version|-V]",
+    "  splice --source <path> --out <dir> [--format markdown oai json sharegpt] [--system-message <text>]",
+    "         [--since <iso>] [--until <iso>] [--min-length <n>] [--exclude-rt] [--only-threads] [--with-media]",
+    "         [--dry-run] [--stats-json] [--log-level <level>] [--json-stdout] [--quiet|-q] [--verbose] [--version|-V]",
     "",
     "Options:",
     "  --source <path>            Path to the Twitter archive directory",
     "  --out <dir>                Output directory",
-    "  --format <fmt...>          One or more formats: markdown, oai, json (default: markdown oai)",
+    "  --format <fmt...>          One or more formats: markdown, oai, json, sharegpt (default: markdown oai)",
     '  --system, --system-message <text>    System message for OAI JSONL (default: "You have been uploaded to the internet")',
+    "  --since <iso>              Include items on/after this ISO date",
+    "  --until <iso>              Include items on/before this ISO date",
+    "  --min-length <n>           Minimum text length",
+    "  --exclude-rt               Exclude retweets (RT ...)",
+    "  --only-threads             Output threads only (ignore conversations/non-thread tweets)",
+    "  --with-media               Only include items that have media",
     "  --dry-run, -n              Plan only; don’t write files",
+    "  --stats-json               Write a stats.json summary",
     "  --log-level <level>        debug|info|warn|error (default: info)",
     "  --json-stdout              Emit normalized items JSONL to stdout (no files); logs to stderr",
     "  --quiet, -q                Errors only",
@@ -174,6 +214,7 @@ function usage(): string {
     "Examples:",
     "  splice --source ./archive --out ./out --format markdown oai json",
     '  splice --source ./archive --out ./out --format oai --system-message "You are helpful."',
+    "  splice --source ./archive --out ./out --since 2024-01-01 --only-threads",
     "  splice --source ./archive --out ./out --json-stdout",
     "  splice --version",
     "",
@@ -220,6 +261,17 @@ function parseLooseArray(input: string): any[] {
     return Array.isArray(result) ? result : [];
   } catch (_) {
     return [];
+  }
+}
+
+async function loadConfig(): Promise<any | undefined> {
+  try {
+    const mod: any = await import("cosmiconfig");
+    const explorer = mod.cosmiconfig("splice");
+    const result = await explorer.search();
+    return result?.config;
+  } catch {
+    return undefined;
   }
 }
 
@@ -390,6 +442,30 @@ function cleanText(
   t = t.replace(/#\w+/g, "");
   t = t.replace(/\s+/g, " ");
   return t.trim();
+}
+
+function applyFilters(
+  items: ContentItem[],
+  opts: {
+    since?: string;
+    until?: string;
+    minLength: number;
+    excludeRt: boolean;
+    onlyThreads: boolean;
+    withMedia: boolean;
+  },
+): ContentItem[] {
+  const sinceTime = opts.since ? new Date(opts.since).getTime() : -Infinity;
+  const untilTime = opts.until ? new Date(opts.until).getTime() : Infinity;
+  return items.filter((it) => {
+    const t = new Date(it.createdAt).getTime();
+    if (!(t >= sinceTime && t <= untilTime)) return false;
+    if (opts.excludeRt && isRetweet(it.text)) return false;
+    if (opts.minLength > 0 && (it.text?.trim().length ?? 0) < opts.minLength)
+      return false;
+    if (opts.withMedia && !(it.media && it.media.length > 0)) return false;
+    return true;
+  });
 }
 
 function indexById(items: ContentItem[]): Record<string, ContentItem> {
@@ -640,6 +716,68 @@ async function writeNormalizedJSONL(
   logger("info", `Wrote normalized items JSONL to ${outPath}`);
 }
 
+async function writeShareGPT(
+  threads: Thread[],
+  conversations: ContentItem[][],
+  outDir: string,
+  logger: (l: Level, m: string) => void,
+  dryRun: boolean,
+) {
+  const outPath = path.join(outDir, "sharegpt.json");
+  if (dryRun) {
+    logger("info", `(dry-run) would write ShareGPT JSON: ${outPath}`);
+    return;
+  }
+  await ensureDir(path.dirname(outPath));
+  const list: Array<{ conversations: Array<{ from: string; value: string }> }> =
+    [];
+  const addConv = async (items: ContentItem[]) => {
+    const msgs = messagesFromConversation(items);
+    if (!msgs.length) return;
+    list.push({
+      conversations: msgs.map((m) => ({
+        from: m.role === "user" ? "human" : "gpt",
+        value: m.content,
+      })),
+    });
+  };
+  for (const t of threads) await addConv(t.items);
+  for (const c of conversations) await addConv(c);
+  await fs.writeFile(outPath, JSON.stringify(list, null, 2), "utf8");
+  logger("info", `Wrote ShareGPT JSON to ${outPath}`);
+}
+
+async function writeStatsJSON(
+  items: ContentItem[],
+  threads: Thread[],
+  conversations: ContentItem[][],
+  outDir: string,
+  logger: (l: Level, m: string) => void,
+  dryRun: boolean,
+) {
+  const outPath = path.join(outDir, "stats.json");
+  const dates = items
+    .map((i) => new Date(i.createdAt).toISOString())
+    .filter(Boolean);
+  const start = dates.length ? dates.reduce((a, b) => (a < b ? a : b)) : null;
+  const end = dates.length ? dates.reduce((a, b) => (a > b ? a : b)) : null;
+  const stats = {
+    totalItems: items.length,
+    tweets: items.filter((i) => i.source === "twitter:tweet").length,
+    likes: items.filter((i) => i.source === "twitter:like").length,
+    threads: threads.length,
+    conversations: conversations.length,
+    dateRange: { start, end },
+  };
+  if (dryRun) {
+    logger("info", `(dry-run) would write stats JSON: ${outPath}`);
+    return;
+  }
+  await ensureDir(path.dirname(outPath));
+  await fs.writeFile(outPath, JSON.stringify(stats, null, 2), "utf8");
+  logger("info", `Wrote stats JSON to ${outPath}`);
+}
+
 /* ---------------------------------- main ---------------------------------- */
 
 async function getVersion(): Promise<string> {
@@ -760,8 +898,19 @@ async function main() {
   try {
     logger("info", `Ingesting from ${source}`);
     const items = await ingestTwitter(source, logger);
-    const all = indexById(items);
-    const { threads, conversations } = groupThreadsAndConversations(all);
+    const filtered = applyFilters(items, {
+      since: opts.since,
+      until: opts.until,
+      minLength: opts.minLength,
+      excludeRt: opts.excludeRt,
+      onlyThreads: opts.onlyThreads,
+      withMedia: opts.withMedia,
+    });
+    const all = indexById(filtered);
+    let { threads, conversations } = groupThreadsAndConversations(all);
+    if (opts.onlyThreads) {
+      conversations = [];
+    }
     logger(
       "info",
       `Threads: ${threads.length}, Conversations: ${conversations.length}`,
@@ -773,7 +922,7 @@ async function main() {
       argv.includes("--format") ||
       argv.includes("--formats") ||
       argv.includes("--output-formats");
-    const allowedFormats = new Set(["markdown", "oai", "json"]);
+    const allowedFormats = new Set(["markdown", "oai", "json", "sharegpt"]);
     const requested = opts.format || [];
     const validFormats = requested.filter((f) => allowedFormats.has(f));
     const invalidFormats = requested.filter((f) => !allowedFormats.has(f));
@@ -801,7 +950,13 @@ async function main() {
     }
 
     if (validFormats.includes("markdown")) {
-      await writeMarkdown(threads, items, outDir, logger, opts.dryRun);
+      await writeMarkdown(
+        threads,
+        opts.onlyThreads ? [] : filtered,
+        outDir,
+        logger,
+        opts.dryRun,
+      );
     }
     if (validFormats.includes("json")) {
       await writeNormalizedJSONL(items, outDir, logger, opts.dryRun);
@@ -815,6 +970,19 @@ async function main() {
         conversations,
         outDir,
         systemMessage,
+        logger,
+        opts.dryRun,
+      );
+    }
+    if (validFormats.includes("sharegpt")) {
+      await writeShareGPT(threads, conversations, outDir, logger, opts.dryRun);
+    }
+    if (opts.statsJson) {
+      await writeStatsJSON(
+        filtered,
+        threads,
+        conversations,
+        outDir,
         logger,
         opts.dryRun,
       );

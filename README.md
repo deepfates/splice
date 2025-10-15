@@ -1,6 +1,6 @@
 # 🫚 splice
 
-Convert your Twitter/X archive into normalized threads and export to Markdown, OAI JSONL, and/or JSON (normalized items). Single-file TypeScript CLI, human-first, composable.
+Convert your Twitter/X archive into normalized threads and export to Markdown, OAI JSONL, JSON (normalized items), and ShareGPT. Single-file TypeScript CLI, human-first, composable.
 
 - Human-friendly CLI (clig.dev principles)
 - Outputs:
@@ -94,9 +94,21 @@ JSON only (normalized items):
 
     npx tsx splice.ts --source ~/Downloads/my-twitter-archive --out ./out --format json
 
-All three formats:
+All formats:
 
-    npx tsx splice.ts --source ~/Downloads/my-twitter-archive --out ./out --format markdown oai json
+    npx tsx splice.ts --source ~/Downloads/my-twitter-archive --out ./out --format markdown oai json sharegpt
+
+Filters and selection:
+
+    npx tsx splice.ts --source ~/Downloads/my-twitter-archive --out ./out --format markdown --since 2024-01-01 --until 2024-12-31 --min-length 40 --exclude-rt --only-threads --with-media
+
+Stats JSON summary:
+
+    npx tsx splice.ts --source ~/Downloads/my-twitter-archive --out ./out --format oai --stats-json
+
+Stream normalized items to stdout:
+
+    npx tsx splice.ts --source ~/Downloads/my-twitter-archive --out ./out --json-stdout | head -n 5
 
 Use environment variable for system message:
 
@@ -127,6 +139,8 @@ On a successful run, you’ll see:
 - `out/images/` — copied media files referenced by the Markdown
 - `out/conversations_oai.jsonl` — OAI JSONL file with conversations built from threads and reply chains
 - `out/normalized_items.jsonl` — JSONL dump of normalized ContentItem records (one item per line)
+- `out/sharegpt.json` — ShareGPT export (array) for loaders that expect ShareGPT format
+- `out/stats.json` — summary (counts, threads/conversations, date range)
 
 Notes:
 - Filenames for threads are derived from the first five words of the top post (sanitized).

@@ -9,6 +9,12 @@
   "bin": {
     "splice": "dist/splice.js"
   },
+  "files": [
+    "dist/**",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
   "scripts": {
     "start": "tsx splice.ts",
     "dev": "tsx watch splice.ts",
@@ -43,6 +49,9 @@
   },
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "cosmiconfig": "^9.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.7.4",
