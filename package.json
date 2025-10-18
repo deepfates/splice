@@ -5,7 +5,10 @@
   "license": "MIT",
   "author": "",
   "type": "module",
-  "main": "dist/splice.js",
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
   "bin": {
     "splice": "dist/splice.js"
   },
