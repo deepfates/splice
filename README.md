@@ -1,43 +1,48 @@
 # 🫚 splice
 
-Convert your Twitter/X archive into normalized threads and export to Markdown, OAI JSONL, JSON (normalized items), and ShareGPT. Single-file TypeScript CLI, human-first, composable.
+Convert social/chat archives into normalized threads and export to Markdown, OAI JSONL, JSON (normalized items), and ShareGPT. Modular TypeScript CLI and library with extensible sources → transforms → outputs.
 
-- Human-friendly CLI (clig.dev principles)
-- Outputs:
-  - Markdown per-thread, plus non-thread tweets grouped by date
-  - OAI-compatible JSONL for language model fine-tuning/evaluation
-  - Normalized items JSONL (one item per line, for debugging/inspection)
+- Idiomatic CLI (clig.dev principles)
+- Modular architecture:
+  - sources: Twitter/X today; Bluesky, ChatGPT, etc. next
+  - transforms: filtering, grouping into threads/conversations, text cleaning
+  - outputs: Markdown, OAI JSONL, JSONL (normalized items), ShareGPT
+- Library API to compose your own pipeline or plug in proprietary adapters
 - Copies referenced media into an images/ folder
-- Works directly with your Twitter archive (manifest.js + data files)
+- JSONL artifacts for easy inspection and future checkpointing
 
 ## Why
 
-A minimalist CLI to turn your Twitter archive into:
-- Markdown you can read or publish
-- OAI JSONL you can train on
-- A normalized JSONL dump for inspection
+Turn your archives into:
+- Readable Markdown
+- OAI-compatible JSONL for training/eval
+- A normalized JSONL dump for inspection and reuse
 
 Today it imports Twitter/X. The plan is to splice in other archives (Bluesky, ChatGPT, Reddit, Glowfic, Hugging Face, …) and let you pick the strands you want to weave into a training set.
 
-This library started life as a python script. This is a TypeScript rewrite where development will continue. Versions of this codebase were used in the development of [deeperfates.com](https://deeperfates.com), [keltham.lol](https://keltham.lol), [youaretheassistantnow.com](https://youaretheassistantnow.com) and other personality clones.
+This library started life as a Python script. This is a TypeScript rewrite where development will continue. It has powered projects like [deeperfates.com](https://deeperfates.com), [keltham.lol](https://keltham.lol), and [youaretheassistantnow.com](https://youaretheassistantnow.com).
 
 More context: https://deepfates.com/convert-your-twitter-archive-into-training-data
 
-## Quick start
+## Quick start (CLI)
 
 Requirements:
-- Node.js 18+ (tested with recent Node LTS and current)
-- For direct execution: `tsx` (installed automatically when using `npx`)
+- Node.js 18+ (tested with recent LTS)
+- For direct execution: `tsx` (installed automatically with `npx`)
 
 Run with tsx (no build needed):
 
     npx tsx splice.ts --source /path/to/twitter-archive --out ./out
 
+Run the published CLI (after install):
+
+    npx splice --source /path/to/twitter-archive --out ./out
+
 Build then run with Node:
 
     npm install
     npm run build
-    node dist/splice.js --source /path/to/twitter-archive --out ./out
+    node dist/cli/splice.js --source /path/to/twitter-archive --out ./out
 
 Dev/watch mode:
 
@@ -50,18 +55,30 @@ Help (equivalent to `--help`):
     splice — convert a Twitter archive to Markdown, OAI JSONL, and/or JSON
 
     Usage:
-      splice --source <path> --out <dir> [--format markdown oai json] [--system-message <text>] [--dry-run] [--log-level <level>]
+      splice --source <path> --out <dir> [--format markdown oai json sharegpt] [--system-message <text>]
+             [--since <iso>] [--until <iso>] [--min-length <n>] [--exclude-rt] [--only-threads] [--with-media]
+             [--dry-run] [--stats-json] [--log-level <level>] [--json-stdout] [--quiet|-q] [--verbose] [--version|-V]
 
     Options:
       --source <path>            Path to the Twitter archive directory
       --out <dir>                Output directory
-      --format <fmt...>          One or more formats: markdown, oai, json (default: markdown oai)
+      --format <fmt...>          One or more formats: markdown, oai, json, sharegpt (default: markdown oai)
       --system-message <text>    System message for OAI JSONL (default: "You have been uploaded to the internet")
                                  Alias: --system
+      --since <iso>              Include items on/after this ISO date
+      --until <iso>              Include items on/before this ISO date
+      --min-length <n>           Minimum text length
+      --exclude-rt               Exclude retweets (RT ...)
+      --only-threads             Output threads only
+      --with-media               Only include items that have media
       --dry-run, -n              Plan only; don’t write files
+      --stats-json               Write a stats.json summary
       --log-level <level>        debug|info|warn|error (default: info)
-      --help, -h                 Show help
+      --json-stdout              Emit normalized items JSONL to stdout; logs to stderr
+      --quiet, -q                Errors only
+      --verbose                  Debug logging
       --version, -V              Show version
+      --help, -h                 Show help
 
     Environment:
       SPLICE_SYSTEM_MESSAGE      Alternative way to set the OAI system message
@@ -73,7 +90,7 @@ Exit codes:
 - 2: invalid arguments or source detection failed
 
 Stdout/Stderr:
-- Primary logs and progress go to stderr (so you can pipe stdout safely when we add stdout formats)
+- Primary logs go to stderr (so you can safely pipe stdout)
 - Data files are written to the output directory
 
 ## Examples
@@ -120,7 +137,7 @@ Dry run with debug logs (no files written):
 
 ## Input assumptions
 
-This first version supports the standard Twitter archive ZIP extracted to a directory that contains:
+Supports the standard Twitter/X archive ZIP extracted to a directory that contains:
 
 - `data/manifest.js`
 - `data/tweets_media/` (optional, for media assets)
@@ -143,8 +160,43 @@ On a successful run, you’ll see:
 - `out/stats.json` — summary (counts, threads/conversations, date range)
 
 Notes:
-- Filenames for threads are derived from the first five words of the top post (sanitized).
+- Thread filenames are derived from the top post’s first words (sanitized).
 - The OAI JSONL file includes a top-level “system” message (configurable).
+
+## Architecture (for contributors)
+
+- src/core — shared types, arg parsing, logger, utilities
+- src/sources — input adapters (twitter.ts)
+- src/transforms — filters, grouping, conversation mapping
+- src/outputs — writers for markdown/oai/json/sharegpt/stats
+- src/cli — CLI entrypoint wiring sources → transforms → outputs
+
+The code is structured so you can add new sources, transforms, or outputs without touching unrelated parts.
+
+## Library usage
+
+You can import and compose pieces in your own app:
+
+```ts
+import {
+  ingestTwitter,
+  applyFilters,
+  indexById,
+  groupThreadsAndConversations,
+  writeOAI,
+} from "@deepfates/splice";
+
+const items = await ingestTwitter("/path/to/archive", (l, m) => console.error(`[${l}] ${m}`));
+const filtered = applyFilters(items, { minLength: 20, excludeRt: true, withMedia: false });
+const all = indexById(filtered);
+const { threads, conversations } = groupThreadsAndConversations(all);
+await writeOAI(threads, conversations, "./out", "You have been uploaded to the internet", (l, m) => console.error(`[${l}] ${m}`), false);
+```
+
+Pluggable adapters (build proprietary ones privately and upstream later if you want):
+
+- SourceAdapter: `detect(pathOrUri)`, `ingest(pathOrUri, logger) → ContentItem[]`
+- OutputAdapter: `write(args, ctx)` where args may include `items`, `threads`, `conversations`, `systemMessage`, and ctx provides `outDir`, `dryRun`, and `logger`
 
 ## Development
 
@@ -160,17 +212,17 @@ Watch mode:
 
     npm run dev -- --source /path/to/twitter-archive --out ./out
 
-Build (emits `dist/splice.js` and sets up the `splice` bin):
+Build (emits `dist/cli/splice.js` and sets up the `splice` bin; library API at `dist/index.js`):
 
     npm run build
 
 Run the built CLI:
 
-    node dist/splice.js --source /path/to/twitter-archive --out ./out
+    node dist/cli/splice.js --source /path/to/twitter-archive --out ./out
 
 ## Testing
 
-Run the full test suite (includes an integration test that verifies Markdown, OAI JSONL with system message, and normalized JSONL outputs):
+Run the full test suite (includes integration tests for Markdown, OAI JSONL with system message, media copying, and normalized JSONL):
 
     npm test
 
@@ -181,9 +233,10 @@ Watch tests:
 ## Roadmap (short)
 
 - More inputs: Bluesky, Reddit, ChatGPT, Glowfic, HF datasets
-- More outputs: ShareGPT, SQLite/Parquet/CSV
+- Checkpointing and resumable pipelines (JSONL-based manifests)
+- More outputs: ShareGPT enhancements, SQLite/Parquet/CSV
 - Better selection: persona/character filters, time ranges
-- Note tweets and improved role attribution
+- Improved role attribution and metadata preservation
 
 ## License
 
