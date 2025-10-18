@@ -5,9 +5,12 @@
   "license": "MIT",
   "author": "",
   "type": "module",
-  "main": "dist/splice.js",
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
   "bin": {
-    "splice": "dist/splice.js"
+    "splice": "dist/cli/splice.js"
   },
   "files": [
     "dist/**",
@@ -16,9 +19,9 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "start": "tsx splice.ts",
-    "dev": "tsx watch splice.ts",
-    "build": "tsc --target ES2022 --module ES2022 --moduleResolution Bundler --outDir dist splice.ts",
+    "start": "tsx src/cli/splice.ts",
+    "dev": "tsx watch src/cli/splice.ts",
+    "build": "tsc -p tsconfig.json",
     "prepare": "npm run build",
     "test": "vitest run --reporter verbose",
     "test:watch": "vitest",

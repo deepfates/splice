@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022"],
+    "rootDir": "src",
+    "outDir": "dist",
+    "baseUrl": ".",
+    "paths": {
+      "@core/*": ["src/core/*"],
+      "@sources/*": ["src/sources/*"],
+      "@transforms/*": ["src/transforms/*"],
+      "@outputs/*": ["src/outputs/*"],
+      "@cli/*": ["src/cli/*"]
+    },
+    "types": ["node"],
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "verbatimModuleSyntax": false,
+    "moduleDetection": "force",
+    "skipLibCheck": true,
+    "sourceMap": true,
+    "declaration": false,
+    "noEmitOnError": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "tests/**"]
+}
