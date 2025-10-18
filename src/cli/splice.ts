@@ -10,12 +10,7 @@ import * as path from "node:path";
 import * as fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
-import {
-  CLIOptions,
-  parseArgs,
-  makeLogger,
-  usage,
-} from "../core/types";
+import { CLIOptions, parseArgs, makeLogger, usage } from "../core/types";
 
 import { detectTwitterArchive, ingestTwitter } from "../sources/twitter";
 import {
@@ -193,7 +188,10 @@ async function main() {
     const validFormats = requested.filter((f) => allowedFormats.has(f));
     const invalidFormats = requested.filter((f) => !allowedFormats.has(f));
     for (const bad of invalidFormats) {
-      logger("warn", `Unknown format "${bad}". Supported: markdown, oai, json`);
+      logger(
+        "warn",
+        `Unknown format "${bad}". Supported: markdown, oai, json, sharegpt`,
+      );
     }
     const jsonStdout = argv.includes("--json-stdout");
 
@@ -209,7 +207,7 @@ async function main() {
     if (formatSpecified && validFormats.length === 0) {
       logger(
         "error",
-        "No valid formats requested. Supported: markdown, oai, json",
+        "No valid formats requested. Supported: markdown, oai, json, sharegpt",
       );
       process.stderr.write(usage() + "\n");
       process.exit(2);

@@ -1,4 +1,10 @@
-import { ContentItem, Thread, ChatMessage, Role, isRetweet } from "../core/types";
+import {
+  ContentItem,
+  Thread,
+  ChatMessage,
+  Role,
+  isRetweet,
+} from "../core/types";
 
 /**
  * Replace shortened URLs with expanded, strip t.co links, mentions, hashtags,
@@ -34,7 +40,10 @@ export type FilterOptions = {
  * Apply stateless filters to a list of ContentItem.
  * Note: onlyThreads is intentionally ignored here; thread selection happens after grouping.
  */
-export function applyFilters(items: ContentItem[], opts: FilterOptions): ContentItem[] {
+export function applyFilters(
+  items: ContentItem[],
+  opts: FilterOptions,
+): ContentItem[] {
   const sinceTime = opts.since ? new Date(opts.since).getTime() : -Infinity;
   const untilTime = opts.until ? new Date(opts.until).getTime() : Infinity;
 
@@ -42,7 +51,8 @@ export function applyFilters(items: ContentItem[], opts: FilterOptions): Content
     const t = new Date(it.createdAt).getTime();
     if (!(t >= sinceTime && t <= untilTime)) return false;
     if (opts.excludeRt && isRetweet(it.text)) return false;
-    if (opts.minLength > 0 && (it.text?.trim().length ?? 0) < opts.minLength) return false;
+    if (opts.minLength > 0 && (it.text?.trim().length ?? 0) < opts.minLength)
+      return false;
     if (opts.withMedia && !(it.media && it.media.length > 0)) return false;
     return true;
   });
@@ -64,7 +74,9 @@ export function indexById(items: ContentItem[]): Record<string, ContentItem> {
  * Threads are chains where all items come from "twitter:tweet".
  * Conversations are chains which include other sources or likes.
  */
-export function groupThreadsAndConversations(all: Record<string, ContentItem>): {
+export function groupThreadsAndConversations(
+  all: Record<string, ContentItem>,
+): {
   threads: Thread[];
   conversations: ContentItem[][];
 } {
@@ -105,6 +117,11 @@ export function groupThreadsAndConversations(all: Record<string, ContentItem>): 
  * - Merge consecutive messages from the same role.
  * - Trim trailing user messages to end on assistant if possible.
  */
+export function inferRole(it: ContentItem): Role {
+  // Heuristic: tweets that look like assistant outputs (e.g., have full_text) are "assistant"; others are "user"
+  return it.raw && "full_text" in (it.raw as any) ? "assistant" : "user";
+}
+
 export function messagesFromConversation(items: ContentItem[]): ChatMessage[] {
   const msgs: ChatMessage[] = [];
   let currentRole: Role | undefined;
@@ -118,7 +135,7 @@ export function messagesFromConversation(items: ContentItem[]): ChatMessage[] {
   }
 
   for (const it of items) {
-    const role: Role = it.raw && "full_text" in (it.raw as any) ? "assistant" : "user";
+    const role: Role = inferRole(it);
     const cleaned = cleanText(it.text, (it.raw as any)?.entities);
     if (!cleaned) continue;
 
