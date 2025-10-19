@@ -60,6 +60,8 @@ export function makeLogger(level: Level): (lvl: Level, msg: string) => void {
 export type CLIOptions = {
   source?: string;
   out?: string;
+  workspace?: string;
+  checkpoint?: string;
   format: string[]; // e.g. ['markdown','oai']
   systemMessage: string;
   dryRun: boolean;
@@ -73,12 +75,16 @@ export type CLIOptions = {
   excludeRt: boolean;
   onlyThreads: boolean;
   withMedia: boolean;
+  // decisions
+  decisionsImport?: string;
+  setStatus?: string;
+  ids?: string[];
+  idsFile?: string;
   // outputs
   statsJson: boolean;
 };
 
-export const DEFAULT_SYSTEM_MESSAGE =
-  "You have been uploaded to the internet";
+export const DEFAULT_SYSTEM_MESSAGE = "You have been uploaded to the internet";
 
 export function parseArgs(argv: string[]): CLIOptions {
   const opts: CLIOptions = {
@@ -94,7 +100,15 @@ export function parseArgs(argv: string[]): CLIOptions {
     excludeRt: false,
     onlyThreads: false,
     withMedia: false,
+    // decisions
+    decisionsImport: undefined,
+    setStatus: undefined,
+    ids: [],
+    idsFile: undefined,
+    // outputs
     statsJson: false,
+    workspace: undefined,
+    checkpoint: undefined,
   };
 
   const args = argv.slice(2);
@@ -160,10 +174,29 @@ export function parseArgs(argv: string[]): CLIOptions {
       opts.withMedia = true;
     } else if (a === "--stats-json") {
       opts.statsJson = true;
+    } else if (a === "--decisions-import" || a === "--decisions-file") {
+      opts.decisionsImport = args[++i];
+    } else if (a === "--set-status" || a === "--status") {
+      opts.setStatus = args[++i];
+    } else if (a === "--ids") {
+      const next = args[++i];
+      if (next) {
+        const parts = next.split(",").filter(Boolean);
+        if (parts.length > 1) opts.ids = parts;
+        else {
+          const list = [next];
+          while (args[i + 1] && !args[i + 1].startsWith("-")) {
+            list.push(args[++i]);
+          }
+          opts.ids = list;
+        }
+      }
+    } else if (a === "--ids-file") {
+      opts.idsFile = args[++i];
     } else if (a === "--") {
       break;
     } else if (a.startsWith("-")) {
-      // unknown flag; ignore to keep simple (CLI warns elsewhere)
+      // unknown flag; ignore to keep simple (CLI will warn elsewhere)
     } else {
       // positional? ignore for now
     }
@@ -181,7 +214,7 @@ export function usage(): string {
     "Usage:",
     "  splice --source <path> --out <dir> [--format markdown oai json sharegpt] [--system-message <text>]",
     "         [--since <iso>] [--until <iso>] [--min-length <n>] [--exclude-rt] [--only-threads] [--with-media]",
-    "         [--dry-run] [--stats-json] [--log-level <level>] [--json-stdout] [--quiet|-q] [--verbose] [--version|-V]",
+    "         [--dry-run] [--stats-json] [--log-level <level>] [--json-stdout] [--quiet|-q] [--verbose] [--version|-V] [--decisions-import <path>] [--set-status <status> --ids <...>|--ids-file <path>]",
     "",
     "Options:",
     "  --source <path>            Path to the Twitter archive directory",
