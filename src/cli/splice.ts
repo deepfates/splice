@@ -25,6 +25,14 @@ import {
   writeShareGPT,
   writeStatsJSON,
 } from "../outputs/writers";
+import {
+  FsStore,
+  createCheckpointManifest,
+  storeItemsJSONL,
+  storeThreadsJSON,
+  storeConversationsJSON,
+} from "../core/store";
+import { decisionsFromIds } from "../core/decisions";
 
 /* -------------------------------- version -------------------------------- */
 
@@ -83,6 +91,8 @@ async function main() {
       "--archive-path",
       "--out",
       "--output-dir",
+      "--workspace",
+      "--checkpoint",
       "--format",
       "--formats",
       "--output-formats",
@@ -102,6 +112,12 @@ async function main() {
       "--only-threads",
       "--with-media",
       "--stats-json",
+      "--decisions-import",
+      "--decisions-file",
+      "--set-status",
+      "--status",
+      "--ids",
+      "--ids-file",
       "--",
     ]);
     const unknown = argv.filter(
@@ -144,6 +160,9 @@ async function main() {
 
   const source = path.resolve(opts.source);
   const outDir = path.resolve(opts.out);
+  const workspaceDir = path.resolve(
+    (opts as any).workspace || path.join(outDir, ".splice"),
+  );
 
   const detected = await detectTwitterArchive(source);
   if (!detected) {
@@ -176,6 +195,163 @@ async function main() {
       "info",
       `Threads: ${threads.length}, Conversations: ${conversations.length}`,
     );
+
+    // Create a checkpoint manifest and store artifacts
+    if (opts.dryRun) {
+      logger("info", `(dry-run) would create checkpoint in ${workspaceDir}`);
+    } else {
+      try {
+        const store = new FsStore(workspaceDir, logger);
+
+        // Optional: build a decisions stream from --decisions-import and/or --set-status with ids/ids-file
+        let decisionsRef: string | undefined;
+
+        // Helper to parse a JSONL file into an iterable of objects
+        const parseJsonlFile = async function* (
+          filePath: string,
+        ): AsyncIterable<any> {
+          try {
+            const raw = await fs.readFile(filePath, "utf8");
+            const lines = raw.split(/\r?\n/);
+            for (const line of lines) {
+              const t = line.trim();
+              if (!t) continue;
+              try {
+                yield JSON.parse(t);
+              } catch {
+                // ignore invalid line
+              }
+            }
+          } catch {
+            // ignore missing file
+          }
+        };
+
+        // Helper to load IDs from a file (either JSON array or newline-separated)
+        const loadIdsFile = async (filePath: string): Promise<string[]> => {
+          try {
+            const raw = await fs.readFile(filePath, "utf8");
+            try {
+              const j = JSON.parse(raw);
+              if (Array.isArray(j))
+                return j.filter((x) => typeof x === "string");
+            } catch {
+              // not JSON; fall through
+            }
+            return raw
+              .split(/\r?\n/)
+              .map((s) => s.trim())
+              .filter(Boolean);
+          } catch {
+            return [];
+          }
+        };
+
+        // Build a combined decisions iterable
+        const decisionIterables: Array<AsyncIterable<any>> = [];
+
+        // Import existing decisions JSONL if provided
+        const decisionsPath = (opts as any).decisionsImport as
+          | string
+          | undefined;
+        if (decisionsPath) {
+          decisionIterables.push(parseJsonlFile(decisionsPath));
+          logger("info", `Importing decisions from ${decisionsPath}`);
+        }
+
+        // Generate new decisions from --set-status and ids/ids-file
+        const setStatus = (opts as any).setStatus as string | undefined;
+        if (setStatus) {
+          let ids: string[] = Array.isArray((opts as any).ids)
+            ? ((opts as any).ids as string[])
+            : [];
+          const idsFile = (opts as any).idsFile as string | undefined;
+          if (idsFile) {
+            const fromFile = await loadIdsFile(idsFile);
+            ids = ids.concat(fromFile);
+          }
+          ids = Array.from(new Set(ids.filter(Boolean)));
+          if (ids.length > 0) {
+            const records = decisionsFromIds(ids, setStatus, { by: "cli" });
+            // Wrap array as async iterable
+            async function* gen() {
+              for (const r of records) yield r;
+            }
+            decisionIterables.push(gen());
+            logger(
+              "info",
+              `Prepared ${records.length} decision(s) with status="${setStatus}"`,
+            );
+          }
+        }
+
+        // If we have any decision streams, materialize them into the store
+        if (decisionIterables.length > 0) {
+          // Concatenate iterables
+          async function* concatAll() {
+            for (const it of decisionIterables) {
+              for await (const rec of it) {
+                yield rec;
+              }
+            }
+          }
+          decisionsRef = await store.putJSONL(concatAll());
+          logger("info", `Stored decisions JSONL as ${decisionsRef}`);
+        }
+
+        const itemsRefAll = await storeItemsJSONL(store, items);
+        const filteredRef = await storeItemsJSONL(store, filtered);
+        const threadsRef = await storeThreadsJSON(store, threads);
+        const conversationsRef = await storeConversationsJSON(
+          store,
+          conversations,
+        );
+
+        const transforms = [
+          {
+            name: "filter",
+            config: {
+              since: opts.since,
+              until: opts.until,
+              minLength: opts.minLength,
+              excludeRt: opts.excludeRt,
+              withMedia: opts.withMedia,
+            },
+            inputRef: itemsRefAll,
+            outputRef: filteredRef,
+            stats: { total: items.length, filtered: filtered.length },
+          },
+          {
+            name: "group:threads",
+            config: {},
+            inputRef: filteredRef,
+            outputRef: threadsRef,
+            stats: { threads: threads.length },
+          },
+          {
+            name: "group:conversations",
+            config: {},
+            inputRef: filteredRef,
+            outputRef: conversationsRef,
+            stats: { conversations: conversations.length },
+          },
+        ];
+
+        const latest = await store.resolveLatestCheckpoint().catch(() => null);
+        const manifest = createCheckpointManifest({
+          parentId: (latest && latest.id) || null,
+          itemsRef: itemsRefAll,
+          sourceRefs: [{ kind: "twitter", uri: source }],
+          transforms,
+          decisionsRef,
+          materialized: { threadsRef, conversationsRef },
+        });
+        const cpId = await store.saveCheckpoint(manifest);
+        logger("info", `Saved checkpoint ${cpId} in ${workspaceDir}`);
+      } catch (e) {
+        logger("warn", `Failed to write checkpoint: ${(e as Error).message}`);
+      }
+    }
 
     // Validate formats and support --json-stdout for piping normalized items
     const argv = process.argv.slice(2);
