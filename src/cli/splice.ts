@@ -161,7 +161,7 @@ async function main() {
   const source = path.resolve(opts.source);
   const outDir = path.resolve(opts.out);
   const workspaceDir = path.resolve(
-    (opts as any).workspace || path.join(outDir, ".splice"),
+    opts.workspace || path.join(outDir, ".splice"),
   );
 
   const detected = await detectTwitterArchive(source);
@@ -251,21 +251,17 @@ async function main() {
         const decisionIterables: Array<AsyncIterable<any>> = [];
 
         // Import existing decisions JSONL if provided
-        const decisionsPath = (opts as any).decisionsImport as
-          | string
-          | undefined;
+        const decisionsPath = opts.decisionsImport;
         if (decisionsPath) {
           decisionIterables.push(parseJsonlFile(decisionsPath));
           logger("info", `Importing decisions from ${decisionsPath}`);
         }
 
         // Generate new decisions from --set-status and ids/ids-file
-        const setStatus = (opts as any).setStatus as string | undefined;
+        const setStatus = opts.setStatus;
         if (setStatus) {
-          let ids: string[] = Array.isArray((opts as any).ids)
-            ? ((opts as any).ids as string[])
-            : [];
-          const idsFile = (opts as any).idsFile as string | undefined;
+          let ids: string[] = opts.ids || [];
+          const idsFile = opts.idsFile;
           if (idsFile) {
             const fromFile = await loadIdsFile(idsFile);
             ids = ids.concat(fromFile);

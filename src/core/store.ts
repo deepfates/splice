@@ -76,19 +76,23 @@ async function ensureDir(p: string) {
 function stableStringify(value: unknown): string {
   // Deterministic JSON stringify (sort object keys)
   const seen = new WeakSet<object>();
-  const stringify = (v: any): string => {
+  const stringify = (v: unknown): string => {
     if (v === null || typeof v !== "object") return JSON.stringify(v);
-    if (seen.has(v)) throw new TypeError("Converting circular structure to JSON");
-    seen.add(v);
+    if (seen.has(v as object))
+      throw new TypeError("Converting circular structure to JSON");
+    seen.add(v as object);
     if (Array.isArray(v)) {
       const out = "[" + v.map((x) => stringify(x)).join(",") + "]";
-      seen.delete(v);
+      seen.delete(v as object);
       return out;
     }
-    const keys = Object.keys(v).sort();
-    const body = keys.map((k) => JSON.stringify(k) + ":" + stringify(v[k])).join(",");
+    const obj = v as Record<string, unknown>;
+    const keys = Object.keys(obj).sort();
+    const body = keys
+      .map((k) => JSON.stringify(k) + ":" + stringify(obj[k]))
+      .join(",");
     const out = "{" + body + "}";
-    seen.delete(v);
+    seen.delete(v as object);
     return out;
   };
   return stringify(value);
@@ -195,10 +199,25 @@ export class FsStore implements Store {
     const fh = await fsp.open(tmpPath, "w");
     const h = hashInit();
     try {
-      for await (const item of iterable as any) {
-        const line = JSON.stringify(item) + "\n";
-        await fh.write(line);
-        hashUpdate(h, line);
+      const maybeAsync = (iterable as any)?.[Symbol.asyncIterator];
+      const maybeSync = (iterable as any)?.[Symbol.iterator];
+
+      if (typeof maybeAsync === "function") {
+        for await (const item of iterable as AsyncIterable<T>) {
+          const line = JSON.stringify(item) + "\n";
+          await fh.write(line);
+          hashUpdate(h, line);
+        }
+      } else if (typeof maybeSync === "function") {
+        for (const item of iterable as Iterable<T>) {
+          const line = JSON.stringify(item) + "\n";
+          await fh.write(line);
+          hashUpdate(h, line);
+        }
+      } else {
+        throw new TypeError(
+          "putJSONL: Provided value is not Iterable or AsyncIterable",
+        );
       }
     } finally {
       await fh.close();
@@ -223,7 +242,8 @@ export class FsStore implements Store {
   async getObject<T = unknown>(ref: string): Promise<T> {
     await this.init();
     const { kind, hash } = parseRef(ref);
-    if (kind !== "json") throw new Error(`getObject expects json ref, got ${ref}`);
+    if (kind !== "json")
+      throw new Error(`getObject expects json ref, got ${ref}`);
     const p = this.objectPath(kind, hash);
     const data = await fsp.readFile(p, "utf8");
     return JSON.parse(data) as T;
@@ -240,7 +260,7 @@ export class FsStore implements Store {
 
   async saveCheckpoint(manifest: CheckpointManifest): Promise<string> {
     await this.init();
-    const id = manifest.id || this.generateCheckpointId(manifest);
+    const id = manifest.id ?? this.generateCheckpointId(manifest);
     const full: CheckpointManifest = {
       ...manifest,
       id,
@@ -272,7 +292,10 @@ export class FsStore implements Store {
     for (const f of files) {
       if (!f.endsWith(".json")) continue;
       try {
-        const data = await fsp.readFile(path.join(this.checkpointsDir, f), "utf8");
+        const data = await fsp.readFile(
+          path.join(this.checkpointsDir, f),
+          "utf8",
+        );
         const m = JSON.parse(data) as CheckpointManifest;
         out.push(m);
       } catch {
