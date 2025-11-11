@@ -151,8 +151,8 @@ We currently ingest:
 
 On a successful run, you’ll see:
 
-- `out/threads/` — one Markdown file per detected thread (user self-replies)
-- `out/tweets_by_date/` — one Markdown file per day for non-thread tweets
+- `out/threads/` — one Markdown file per detected thread, named like `YYYYMMDD-thread-<slug>.md`
+- `out/tweets/` — one Markdown file per non-thread tweet, named like `YYYYMMDD-tweet-<slug>.md`
 - `out/images/` — copied media files referenced by the Markdown
 - `out/conversations_oai.jsonl` — OAI JSONL file with conversations built from threads and reply chains
 - `out/normalized_items.jsonl` — JSONL dump of normalized ContentItem records (one item per line)

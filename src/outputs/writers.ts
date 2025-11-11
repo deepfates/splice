@@ -83,8 +83,8 @@ function isolateQuotedTweetLinks(text: string): string {
 
 /**
  * Write Markdown outputs:
- * - threads/&lt;title&gt;.md with frontmatter, cleaned text, media links, and link to Twitter
- * - tweets_by_date/&lt;YYYY-MM-DD&gt;.md for non-thread tweets (excluding RTs)
+ * - threads/&lt;yyyymmdd&gt;-thread-&lt;slug&gt;.md with frontmatter, cleaned text, media links, and link to Twitter
+ * - tweets/&lt;yyyymmdd&gt;-tweet-&lt;slug&gt;.md for non-thread tweets (excluding RTs)
  * - images/_&lt;file&gt; copied for referenced items
  */
 export async function writeMarkdown(
@@ -95,17 +95,18 @@ export async function writeMarkdown(
   dryRun: boolean,
 ) {
   const threadsDir = path.join(outDir, "threads");
-  const byDateDir = path.join(outDir, "tweets_by_date");
+  const tweetsDir = path.join(outDir, "tweets");
   const imagesDir = path.join(outDir, "images");
 
   if (!dryRun) {
     await ensureDir(threadsDir);
-    await ensureDir(byDateDir);
+    await ensureDir(tweetsDir);
     await ensureDir(imagesDir);
   }
 
   // Copy media for all thread items + non-thread tweets
-  const threadItems = threads.flatMap((t) => t.items);
+  const realThreads = threads.filter((t) => t.items.length > 1);
+  const threadItems = realThreads.flatMap((t) => t.items);
   const threadIds = new Set(threadItems.map((i) => i.id));
   const nonThreadTweets = items.filter(
     (i) =>
@@ -119,8 +120,8 @@ export async function writeMarkdown(
   if (!dryRun) await copyMedia(copyPool, imagesDir, logger);
 
   // Save threads
-  logger("info", `Saving ${threads.length} threads`);
-  for (const thread of threads) {
+  logger("info", `Saving ${realThreads.length} threads`);
+  for (const thread of realThreads) {
     const first = thread.items[0];
     const date = formatIsoDateOnly(first.createdAt);
     const fm = `---\nDate: ${date}\n---\n`;
@@ -129,7 +130,7 @@ export async function writeMarkdown(
     for (const t of thread.items) {
       const mediaLinks = (t.media ?? []).map((m) => {
         const base = m.absPath ? path.basename(m.absPath) : `${m.id}.bin`;
-        return `![${base}](../images/_${base})`;
+        return `![${base}](../../images/_${base})`;
       });
       const cleaned = cleanText(t.text, (t.raw as any)?.entities);
       const prepared = isolateQuotedTweetLinks(cleaned);
@@ -138,52 +139,43 @@ export async function writeMarkdown(
 
     const firstWords = thread.items[0].text.split(/\s+/).slice(0, 5).join(" ");
     const name = sanitizeFilename(firstWords) || thread.id;
-    const filePath = path.join(threadsDir, `${name}.md`);
+    const ymd = date.replace(/-/g, "");
+    const filePath = path.join(threadsDir, `${ymd}/${name}.md`);
     const topLink = `https://twitter.com/i/web/status/${first.id}`;
     const body = `${fm}\n${parts.join("\n\n")}\n\n[View on Twitter](${topLink})`;
 
     if (dryRun) {
       logger("info", `(dry-run) would write thread file: ${filePath}`);
     } else {
+      await ensureDir(path.dirname(filePath));
       await fs.writeFile(filePath, body, "utf8");
     }
   }
 
   // Save non-thread tweets by date
-  const byDate: Record<string, ContentItem[]> = {};
+  // Save single tweets (non-RTs not part of multi-tweet threads) as individual files in tweets/
   for (const t of nonThreadTweets) {
-    const d = formatIsoDateOnly(t.createdAt);
-    (byDate[d] ||= []).push(t);
-  }
-
-  for (const [date, dayItems] of Object.entries(byDate)) {
-    dayItems.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-    const content = dayItems
-      .map((t) => {
-        const dt = new Date(t.createdAt);
-        const time = isNaN(dt.getTime())
-          ? ""
-          : dt.toLocaleTimeString("en-US", {
-              hour: "numeric",
-              minute: "2-digit",
-            });
-        const images = (t.media ?? [])
-          .map((m) => {
-            const base = m.absPath ? path.basename(m.absPath) : `${m.id}.bin`;
-            return `![${base}](../images/_${base})`;
-          })
-          .join("\n");
-        const cleaned = cleanText(t.text, (t.raw as any)?.entities);
-        const prepared = isolateQuotedTweetLinks(cleaned);
-        const withImages = images ? `${prepared}\n\n${images}` : prepared;
-        return `*${time}*  \n${withImages}`;
+    const date = formatIsoDateOnly(t.createdAt);
+    const ymd = date.replace(/-/g, "");
+    const fm = `---\nDate: ${date}\n---\n`;
+    const images = (t.media ?? [])
+      .map((m) => {
+        const base = m.absPath ? path.basename(m.absPath) : `${m.id}.bin`;
+        return `![${base}](../../images/_${base})`;
       })
-      .join("\n\n---\n\n");
-
-    const filePath = path.join(byDateDir, `${date}.md`);
+      .join("\n");
+    const cleaned = cleanText(t.text, (t.raw as any)?.entities);
+    const prepared = isolateQuotedTweetLinks(cleaned);
+    const withImages = images ? `${prepared}\n\n${images}` : prepared;
+    const words = t.text.split(/\s+/).slice(0, 5).join(" ");
+    const slug = sanitizeFilename(words) || t.id;
+    const topLink = `https://twitter.com/i/web/status/${t.id}`;
+    const content = `${fm}\n${withImages}\n\n[View on Twitter](${topLink})`;
+    const filePath = path.join(tweetsDir, `${ymd}/${slug}.md`);
     if (dryRun) {
-      logger("info", `(dry-run) would write daily file: ${filePath}`);
+      logger("info", `(dry-run) would write tweet file: ${filePath}`);
     } else {
+      await ensureDir(path.dirname(filePath));
       await fs.writeFile(filePath, content, "utf8");
     }
   }

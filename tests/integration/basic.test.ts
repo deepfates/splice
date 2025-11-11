@@ -69,20 +69,27 @@ describe("splice CLI integration", () => {
 
     // Check Markdown outputs
     const threadsDir = path.join(outDir, "threads");
-    const tweetsByDateDir = path.join(outDir, "tweets_by_date");
+    const tweetsDir = path.join(outDir, "tweets");
     const imagesDir = path.join(outDir, "images");
 
     // Directories should exist
     expect(fssync.existsSync(threadsDir)).toBe(true);
-    expect(fssync.existsSync(tweetsByDateDir)).toBe(true);
+    expect(fssync.existsSync(tweetsDir)).toBe(true);
     expect(fssync.existsSync(imagesDir)).toBe(true);
 
     // We expect exactly one thread file from the 2-tweet self-reply chain
-    const threadFiles = await fs.readdir(threadsDir);
+    const threadSubdirs = (
+      await fs.readdir(threadsDir, { withFileTypes: true })
+    )
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
+    expect(threadSubdirs.length).toBe(1);
+    const threadYmdDir = path.join(threadsDir, threadSubdirs[0]);
+    const threadFiles = await fs.readdir(threadYmdDir);
     expect(threadFiles.filter((f) => f.endsWith(".md")).length).toBe(1);
 
     const threadMdPath = path.join(
-      threadsDir,
+      threadYmdDir,
       threadFiles.find((f) => f.endsWith(".md")) as string,
     );
     const threadContent = await fs.readFile(threadMdPath, "utf8");
@@ -94,9 +101,9 @@ describe("splice CLI integration", () => {
     expect(threadContent).toContain("View on Twitter");
     expect(threadContent).toContain("1000000000000000001");
 
-    // No non-thread tweets in this fixture, so the per-day directory should be empty or contain no .md files
-    const byDateFiles = await fs.readdir(tweetsByDateDir);
-    expect(byDateFiles.filter((f) => f.endsWith(".md")).length).toBe(0);
+    // No non-thread tweets in this fixture, so the tweets directory should be empty or contain no .md files
+    const tweetFiles = await fs.readdir(tweetsDir);
+    expect(tweetFiles.filter((f) => f.endsWith(".md")).length).toBe(0);
 
     // Check OAI JSONL output and system message handling
     const oaiPath = path.join(outDir, "conversations_oai.jsonl");

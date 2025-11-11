@@ -57,8 +57,8 @@ Dates are in YYYY-MM-DD.
   - Builds self‑reply threads and basic conversations.
 - Exports:
   - Markdown:
-    - Per‑thread files under `out/threads/`.
-    - Non‑thread tweets grouped by day under `out/tweets_by_date/`.
+    - Per‑thread files under `out/threads/`, named like `YYYYMMDD-thread-<slug>.md`.
+    - Non‑thread tweets as individual files under `out/tweets/`, named like `YYYYMMDD-tweet-<slug>.md`.
     - Copies referenced media into `out/images/` and links them from Markdown.
   - OAI JSONL:
     - Writes `out/conversations_oai.jsonl`.
