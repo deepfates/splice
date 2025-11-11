@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { CLIOptions, parseArgs, makeLogger, usage } from "../core/types";
 
 import { detectTwitterArchive, ingestTwitter } from "../sources/twitter";
-import { conversationsFromGlowficUrls } from "../sources/glowfic";
+// Glowfic support is loaded dynamically when needed to avoid ESM/undici issues on Node 18
 import {
   applyFilters,
   indexById,
@@ -201,6 +201,10 @@ async function main() {
       process.exit(2);
     }
     try {
+      // Lazy-load Glowfic support to avoid undici import on Node 18 when not used
+      const { conversationsFromGlowficUrls } = await import(
+        "../sources/glowfic"
+      );
       const convs = await conversationsFromGlowficUrls(
         opts.glowfic,
         { displayName: re, handle: re, author: re } as any,
