@@ -7,8 +7,8 @@ import {
 } from "../core/types";
 
 /**
- * Replace shortened URLs with expanded, strip t.co links, mentions, hashtags,
- * collapse whitespace and trim.
+ * Replace shortened URLs with expanded; strip t.co links, mentions, hashtags.
+ * Preserve paragraph breaks; collapse intra-line spaces and trim.
  */
 export function cleanText(
   text: string,
@@ -20,10 +20,19 @@ export function cleanText(
       if (u.url && u.expanded_url) t = t.split(u.url).join(u.expanded_url);
     }
   }
+  // Normalize line endings
+  t = t.replace(/\r\n?/g, "\n");
+  // Remove t.co links, mentions, and hashtags
   t = t.replace(/https:\/\/t\.co\/\w+/g, "");
   t = t.replace(/@\w+/g, "");
   t = t.replace(/#\w+/g, "");
-  t = t.replace(/\s+/g, " ");
+  // Collapse spaces/tabs within lines while preserving paragraph breaks
+  t = t
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+/g, " ").trim())
+    .join("\n");
+  // Limit excessive blank lines but keep paragraph breaks
+  t = t.replace(/\n{3,}/g, "\n\n");
   return t.trim();
 }
 
@@ -71,8 +80,9 @@ export function indexById(items: ContentItem[]): Record<string, ContentItem> {
 
 /**
  * Group items into tweet threads and mixed-source conversations.
- * Threads are chains where all items come from "twitter:tweet".
- * Conversations are chains which include other sources or likes.
+ * Threads are chains where all items come from "twitter:tweet" and are self-replies.
+ * A self-reply is one where inReplyToUserId matches accountId (or is null/missing).
+ * Conversations are chains which include other sources, likes, or replies to others.
  */
 export function groupThreadsAndConversations(
   all: Record<string, ContentItem>,
@@ -99,7 +109,28 @@ export function groupThreadsAndConversations(
     for (const c of chain) processed.add(c.id);
 
     const allTweets = chain.every((c) => c.source === "twitter:tweet");
-    if (allTweets) {
+
+    // Check if this is a self-thread (all tweets are self-replies)
+    // A tweet is a self-reply if:
+    // 1. It has no parent (root tweet), OR
+    // 2. inReplyToUserId matches accountId, OR
+    // 3. inReplyToUserId is null/missing (older archives may not have this field)
+    const isSelfThread = chain.every((c) => {
+      // Root tweets (no parent) are always part of self-threads
+      if (!c.parentId) return true;
+
+      // If we have accountId and inReplyToUserId, check they match
+      if (c.accountId && c.inReplyToUserId) {
+        return c.inReplyToUserId === c.accountId;
+      }
+
+      // If inReplyToUserId is missing, we can't determine ownership
+      // In this case, fall back to checking if parent is in our chain
+      // (assumes parent must be by same user if it's in the archive)
+      return true;
+    });
+
+    if (allTweets && isSelfThread) {
       const ordered = chain.slice().reverse(); // oldest → newest
       threads.push({ id: ordered[0].id, items: ordered });
     } else {

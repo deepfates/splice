@@ -32,23 +32,60 @@ export async function detectTwitterArchive(rootPath: string): Promise<boolean> {
 }
 
 /**
- * Return media file basenames for a given tweet id.
- * Filters out zero-byte files to avoid broken copies.
+ * Read the account owner's user ID from account.js
  */
-async function getMediaFiles(root: string, id: string): Promise<string[]> {
+async function getAccountId(rootPath: string): Promise<string | null> {
+  try {
+    const accountPath = path.join(rootPath, "data", "account.js");
+    const accountData = await readJsonFromJs(accountPath);
+    // account.js typically has structure like [{ account: { accountId: "123" } }]
+    if (Array.isArray(accountData) && accountData.length > 0) {
+      const account = accountData[0]?.account;
+      return account?.accountId || null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Build a map of tweet ID to media files.
+ * Filters out zero-byte files to avoid broken copies.
+ * This is called once per ingestion instead of once per tweet for performance.
+ */
+async function buildMediaMap(
+  root: string,
+  logger: (l: Level, m: string) => void,
+): Promise<Map<string, string[]>> {
   const mediaDir = path.join(root, "data", "tweets_media");
+  const mediaMap = new Map<string, string[]>();
+
   try {
     const files = await fs.readdir(mediaDir);
-    const filtered: string[] = [];
+    logger("info", `Indexing ${files.length} media files...`);
+
     for (const f of files) {
-      if (!f.startsWith(`${id}-`)) continue;
+      // Extract tweet ID from filename pattern: {tweetId}-{rest}.{ext}
+      const match = f.match(/^(\d+)-/);
+      if (!match) continue;
+
+      const tweetId = match[1];
       const stat = await fs.stat(path.join(mediaDir, f));
-      if (stat.size > 0) filtered.push(f);
+      if (stat.size === 0) continue; // Skip zero-byte files
+
+      if (!mediaMap.has(tweetId)) {
+        mediaMap.set(tweetId, []);
+      }
+      mediaMap.get(tweetId)!.push(f);
     }
-    return filtered;
-  } catch {
-    return [];
+
+    logger("info", `Indexed media for ${mediaMap.size} tweets`);
+  } catch (err) {
+    logger("warn", `Could not read tweets_media directory: ${err}`);
   }
+
+  return mediaMap;
 }
 
 /**
@@ -62,6 +99,7 @@ function normalizeTweetLike(
   text: string;
   created_at: string;
   parent_id?: string | null;
+  in_reply_to_user_id?: string | null;
   raw: any;
 } | null {
   const t = item?.tweet ?? item?.like ?? item;
@@ -71,7 +109,9 @@ function normalizeTweetLike(
   const text = t.text || t.fullText || t.full_text || "";
   const created_at = t.created_at || t.createdAt || "";
   const parent_id = t.in_reply_to_status_id || t.inReplyTo || null;
-  return { id, text, created_at, parent_id, raw: t };
+  const in_reply_to_user_id =
+    t.in_reply_to_user_id || t.in_reply_to_user_id_str || null;
+  return { id, text, created_at, parent_id, in_reply_to_user_id, raw: t };
 }
 
 /**
@@ -86,9 +126,20 @@ export async function ingestTwitter(
   const types = manifest.dataTypes ?? {};
   const out: ContentItem[] = [];
 
+  // Get the account owner's user ID
+  const accountId = await getAccountId(rootPath);
+  if (accountId) {
+    logger("info", `Account ID: ${accountId}`);
+  } else {
+    logger("warn", "Could not determine account ID from account.js");
+  }
+
   const selected: Array<"tweets" | "like"> = Object.keys(types).filter(
     (t) => t === "tweets" || t === "like",
   ) as any;
+
+  // Build media map once for all tweets (major performance optimization)
+  const mediaMap = await buildMediaMap(rootPath, logger);
 
   for (const dataType of selected) {
     const info = types[dataType];
@@ -111,7 +162,7 @@ export async function ingestTwitter(
         );
         if (!norm) continue;
 
-        const mediaFiles = await getMediaFiles(rootPath, norm.id);
+        const mediaFiles = mediaMap.get(norm.id) || [];
         const media: MediaAttachment[] = mediaFiles.map((fn) => ({
           id: `${norm.id}_${fn.replace(/\.\w+$/, "")}`,
           contentType: mediaTypeFromExt(fn),
@@ -125,8 +176,12 @@ export async function ingestTwitter(
         out.push({
           id: norm.id,
           text: norm.text,
-          createdAt: norm.created_at ? toIso(norm.created_at) : new Date().toISOString(),
+          createdAt: norm.created_at
+            ? toIso(norm.created_at)
+            : new Date().toISOString(),
           parentId: norm.parent_id ?? null,
+          inReplyToUserId: norm.in_reply_to_user_id ?? null,
+          accountId: accountId,
           source: dataType === "tweets" ? "twitter:tweet" : "twitter:like",
           raw: norm.raw,
           media,

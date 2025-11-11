@@ -25,6 +25,8 @@ export interface ContentItem {
   text: string;
   createdAt: string; // ISO-8601
   parentId?: string | null;
+  inReplyToUserId?: string | null; // Twitter user ID this is replying to
+  accountId?: string | null; // Account owner's user ID (for filtering self-threads)
   source: SourceId;
   raw?: Record<string, unknown>;
   media?: MediaAttachment[];

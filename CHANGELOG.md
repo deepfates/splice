@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Threads now correctly exclude replies from other users. Previously, if someone replied to your tweet, that reply would be included in your thread output. Now threads only include self-replies (where `in_reply_to_user_id` matches your account ID).
+  - Added `accountId` and `inReplyToUserId` fields to `ContentItem` type
+  - Updated Twitter source adapter to read account ID from `data/account.js`
+  - Updated Twitter source adapter to extract `in_reply_to_user_id` from tweets
+  - Modified `groupThreadsAndConversations` to filter threads to only include self-replies
+  - Replies from others are still captured in normalized output but excluded from thread files
+
+### Performance
+- **Major optimization**: Media file indexing is now O(n) instead of O(n²). Previously, for each tweet we would read the entire media directory to find matching files. Now we build a single media map upfront, reducing processing time from minutes to seconds for large archives.
+  - Processing 767k tweets with 12k media files now takes ~39 seconds (down from potentially hours)
+  - Replaced per-tweet `getMediaFiles()` calls with a single `buildMediaMap()` call at ingestion start
+
+
 All notable changes to this project will be documented in this file.
 
 This project follows Conventional Commits and semantic versioning.

@@ -141,4 +141,147 @@ describe("splice CLI integration", () => {
     expect(typeof firstItem.createdAt).toBe("string");
     expect(typeof firstItem.source).toBe("string");
   }, 30_000);
+
+  it("excludes replies from others (non-self-replies) from threads", async () => {
+    // Create a fixture with a thread that has a reply from another user
+    const tempFixture = await fs.mkdtemp(
+      path.join(os.tmpdir(), "splice-thread-test-"),
+    );
+
+    try {
+      const dataDir = path.join(tempFixture, "data");
+      await fs.mkdir(dataDir, { recursive: true });
+
+      // Create manifest.js
+      await fs.writeFile(
+        path.join(dataDir, "manifest.js"),
+        `window.YTD.manifest.part0 = {
+  "dataTypes": {
+    "tweets": {
+      "files": [{ "fileName": "data/tweets.js" }]
+    }
+  }
+};`,
+      );
+
+      // Create account.js with owner ID
+      await fs.writeFile(
+        path.join(dataDir, "account.js"),
+        `window.YTD.account.part0 = [{
+  "account": {
+    "accountId": "1111111111",
+    "username": "owner"
+  }
+}];`,
+      );
+
+      // Create tweets.js with:
+      // - Root tweet by owner
+      // - Self-reply by owner (should be in thread)
+      // - Reply from someone else (should NOT be in thread)
+      await fs.writeFile(
+        path.join(dataDir, "tweets.js"),
+        `window.YTD.tweets.part0 = [
+  {
+    tweet: {
+      id: "100",
+      full_text: "Root tweet by owner",
+      createdAt: "2025-01-01T10:00:00.000Z"
+    }
+  },
+  {
+    tweet: {
+      id: "101",
+      full_text: "Self reply by owner",
+      createdAt: "2025-01-01T10:01:00.000Z",
+      in_reply_to_status_id: "100",
+      in_reply_to_user_id: "1111111111"
+    }
+  },
+  {
+    tweet: {
+      id: "102",
+      full_text: "Reply from someone else",
+      createdAt: "2025-01-01T10:02:00.000Z",
+      in_reply_to_status_id: "101",
+      in_reply_to_user_id: "2222222222"
+    }
+  }
+];`,
+      );
+
+      const tempOut = await fs.mkdtemp(
+        path.join(os.tmpdir(), "splice-thread-out-"),
+      );
+
+      try {
+        const { exitCode } = await execa(
+          tsxBin,
+          [
+            cliEntry,
+            "--source",
+            tempFixture,
+            "--out",
+            tempOut,
+            "--format",
+            "markdown",
+            "json",
+            "--log-level",
+            "warn",
+          ],
+          { cwd: projectRoot },
+        );
+
+        expect(exitCode).toBe(0);
+
+        // Check that we have exactly one thread (root + self-reply only)
+        const threadsDir = path.join(tempOut, "threads");
+        const threadFiles = await fs.readdir(threadsDir);
+        const mdFiles = threadFiles.filter((f) => f.endsWith(".md"));
+        expect(mdFiles.length).toBe(1);
+
+        // Read the thread content
+        const threadContent = await fs.readFile(
+          path.join(threadsDir, mdFiles[0]),
+          "utf8",
+        );
+
+        // Should contain the root tweet and self-reply
+        expect(threadContent).toContain("Root tweet by owner");
+        expect(threadContent).toContain("Self reply by owner");
+
+        // Should NOT contain the reply from someone else
+        expect(threadContent).not.toContain("Reply from someone else");
+
+        // Check normalized items to verify the reply from others is still captured
+        const normPath = path.join(tempOut, "normalized_items.jsonl");
+        const normRaw = await fs.readFile(normPath, "utf8");
+        const normLines = normRaw
+          .split("\n")
+          .map((l) => l.trim())
+          .filter(Boolean);
+
+        // All 3 tweets should be in normalized items
+        expect(normLines.length).toBe(3);
+
+        // Verify the reply from others has the correct inReplyToUserId
+        const items = normLines.map((l) => JSON.parse(l));
+        const replyFromOther = items.find((i) => i.id === "102");
+        expect(replyFromOther).toBeDefined();
+        expect(replyFromOther?.inReplyToUserId).toBe("2222222222");
+      } finally {
+        if (tempOut.startsWith(os.tmpdir())) {
+          await fs
+            .rm(tempOut, { recursive: true, force: true })
+            .catch(() => {});
+        }
+      }
+    } finally {
+      if (tempFixture.startsWith(os.tmpdir())) {
+        await fs
+          .rm(tempFixture, { recursive: true, force: true })
+          .catch(() => {});
+      }
+    }
+  }, 30_000);
 });

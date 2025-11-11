@@ -47,10 +47,45 @@ async function copyMedia(
 }
 
 /**
+ * Ensure quoted tweet links render as separate paragraphs.
+ * Surround twitter.com or x.com status URLs with blank lines, without stripping intentional spacing.
+ */
+function isolateQuotedTweetLinks(text: string): string {
+  if (!text) return "";
+  const urlPattern =
+    /(https?:\/\/(?:www\.)?(?:twitter|x)\.com\/[A-Za-z0-9_]+\/status\/\d+(?:\?[^)\s]*)?)/g;
+  // First, put links on their own line
+  let s = text.replace(urlPattern, "\n$1\n");
+  // Then ensure a blank line before and after any standalone link line
+  const urlLineRe =
+    /^https?:\/\/(?:www\.)?(?:twitter|x)\.com\/[A-Za-z0-9_]+\/status\/\d+(?:\?[^)\s]*)?$/;
+  const lines = s.split("\n");
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const isUrl = urlLineRe.test(line.trim());
+    if (isUrl) {
+      if (out.length > 0 && out[out.length - 1].trim() !== "") {
+        out.push("");
+      }
+      out.push(line.trim());
+      const next = lines[i + 1];
+      if (next !== undefined && next.trim() !== "") {
+        out.push("");
+      }
+    } else {
+      out.push(line);
+    }
+  }
+  // Collapse runs of 3+ blank lines to exactly two
+  return out.join("\n").replace(/\n{3,}/g, "\n\n");
+}
+
+/**
  * Write Markdown outputs:
- * - threads/<title>.md with frontmatter, cleaned text, media links, and link to Twitter
- * - tweets_by_date/<YYYY-MM-DD>.md for non-thread tweets (excluding RTs)
- * - images/_<file> copied for referenced items
+ * - threads/&lt;title&gt;.md with frontmatter, cleaned text, media links, and link to Twitter
+ * - tweets_by_date/&lt;YYYY-MM-DD&gt;.md for non-thread tweets (excluding RTs)
+ * - images/_&lt;file&gt; copied for referenced items
  */
 export async function writeMarkdown(
   threads: Thread[],
@@ -75,7 +110,6 @@ export async function writeMarkdown(
   const nonThreadTweets = items.filter(
     (i) =>
       i.source === "twitter:tweet" &&
-      !i.parentId &&
       !threadIds.has(i.id) &&
       !isRetweet(i.text),
   );
@@ -98,7 +132,8 @@ export async function writeMarkdown(
         return `![${base}](../images/_${base})`;
       });
       const cleaned = cleanText(t.text, (t.raw as any)?.entities);
-      parts.push(`${cleaned}\n\n${mediaLinks.join("\n")}`.trim());
+      const prepared = isolateQuotedTweetLinks(cleaned);
+      parts.push(`${prepared}\n\n${mediaLinks.join("\n")}`.trim());
     }
 
     const firstWords = thread.items[0].text.split(/\s+/).slice(0, 5).join(" ");
@@ -137,9 +172,11 @@ export async function writeMarkdown(
             const base = m.absPath ? path.basename(m.absPath) : `${m.id}.bin`;
             return `![${base}](../images/_${base})`;
           })
-          .join("");
+          .join("\n");
         const cleaned = cleanText(t.text, (t.raw as any)?.entities);
-        return `*${time}*  \n${cleaned}${images}`;
+        const prepared = isolateQuotedTweetLinks(cleaned);
+        const withImages = images ? `${prepared}\n\n${images}` : prepared;
+        return `*${time}*  \n${withImages}`;
       })
       .join("\n\n---\n\n");
 
