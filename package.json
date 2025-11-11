@@ -56,7 +56,8 @@
   "dependencies": {
     "@atproto/api": "^0.18.0",
     "@atproto/repo": "^0.8.10",
-    "cosmiconfig": "^9.0.0"
+    "cosmiconfig": "^9.0.0",
+    "glowfic-dl": "^0.2.1"
   },
   "devDependencies": {
     "@types/node": "^22.7.4",

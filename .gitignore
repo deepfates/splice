@@ -51,6 +51,5 @@ tmp/
 temp/
 
 # Test outputs
-out/
-outberduck/
+out*/
 .splice/

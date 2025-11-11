@@ -10,7 +10,11 @@ import * as path from "node:path";
 
 export type Level = "debug" | "info" | "warn" | "error";
 
-export type SourceId = "twitter:tweet" | "twitter:like" | string;
+export type SourceId =
+  | "twitter:tweet"
+  | "twitter:like"
+  | "glowfic:post"
+  | string;
 
 export interface MediaAttachment {
   id: string;
@@ -86,6 +90,10 @@ export type CLIOptions = {
   statsJson: boolean;
   // bluesky enrichment
   enrich: boolean;
+  // glowfic
+  glowfic?: string[]; // one or more Glowfic URLs (thread/section/board)
+  assistant?: string; // case-insensitive match on character display name/handle/author
+  assistantRegex?: string; // regex (JS) on display name/handle/author
 };
 
 export const DEFAULT_SYSTEM_MESSAGE = "You have been uploaded to the internet";
@@ -115,6 +123,10 @@ export function parseArgs(argv: string[]): CLIOptions {
     checkpoint: undefined,
     // bluesky enrichment
     enrich: false,
+    // glowfic
+    glowfic: [],
+    assistant: undefined,
+    assistantRegex: undefined,
   };
 
   const args = argv.slice(2);
@@ -178,6 +190,27 @@ export function parseArgs(argv: string[]): CLIOptions {
       opts.onlyThreads = true;
     } else if (a === "--with-media") {
       opts.withMedia = true;
+    } else if (
+      a === "--glowfic" ||
+      a === "--glowfic-url" ||
+      a === "--glowfic-urls"
+    ) {
+      const next = args[++i];
+      if (next) {
+        const parts = next.split(",").filter(Boolean);
+        if (parts.length > 1) opts.glowfic = parts;
+        else {
+          const list = [next];
+          while (args[i + 1] && !args[i + 1].startsWith("-")) {
+            list.push(args[++i]);
+          }
+          opts.glowfic = list;
+        }
+      }
+    } else if (a === "--assistant") {
+      opts.assistant = args[++i];
+    } else if (a === "--assistant-regex" || a === "--assistant-re") {
+      opts.assistantRegex = args[++i];
     } else if (a === "--stats-json") {
       opts.statsJson = true;
     } else if (a === "--enrich") {
@@ -217,7 +250,7 @@ export function parseArgs(argv: string[]): CLIOptions {
 
 export function usage(): string {
   return [
-    "splice — convert a Twitter archive to Markdown, OAI JSONL, and/or JSON",
+    "splice — convert a Twitter archive or Glowfic URLs to Markdown, OAI JSONL, and/or JSON",
     "",
     "Usage:",
     "  splice --source <path> --out <dir> [--format markdown oai json sharegpt] [--system-message <text>]",
@@ -243,6 +276,9 @@ export function usage(): string {
     "  --verbose                  Debug logging",
     "  --version, -V              Show version",
     "  --help, -h                 Show help",
+    "  --glowfic <url...>         One or more Glowfic URLs (thread, section, or board)",
+    "  --assistant <text>         Assistant selector (case-insensitive match on character display name, handle, or author)",
+    "  --assistant-regex <re>     Assistant selector regex (JavaScript), tested on display name, handle, or author",
     "",
     "Examples:",
     "  splice --source ./archive --out ./out --format markdown oai json",
@@ -250,6 +286,8 @@ export function usage(): string {
     "  splice --source ./archive --out ./out --since 2024-01-01 --only-threads",
     "  splice --source ./archive --out ./out --json-stdout",
     "  splice --version",
+    "  splice --glowfic https://glowfic.com/posts/5506 --out ./out --format oai --assistant carissa",
+    '  splice --glowfic https://glowfic.com/boards/215 --out ./out --format oai --assistant-regex "carissa"',
     "",
     "Docs: https://github.com/deepfates/splice • Context: https://deepfates.com/convert-your-twitter-archive-into-training-data",
   ].join("\n");

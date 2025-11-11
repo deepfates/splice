@@ -14,6 +14,7 @@ import { CLIOptions, parseArgs, makeLogger, usage } from "../core/types";
 
 import { detectTwitterArchive, ingestTwitter } from "../sources/twitter";
 import { detectBlueskyCar, ingestBlueskyCar, enrichBlueskyPosts } from "../sources/bluesky";
+import { conversationsFromGlowficUrls } from "../sources/glowfic";
 import {
   applyFilters,
   indexById,
@@ -120,6 +121,12 @@ async function main() {
       "--ids",
       "--ids-file",
       "--enrich",
+      "--glowfic",
+      "--glowfic-url",
+      "--glowfic-urls",
+      "--assistant",
+      "--assistant-regex",
+      "--assistant-re",
       "--",
     ]);
     const unknown = argv.filter(
@@ -155,17 +162,90 @@ async function main() {
     }
   }
 
-  if (!opts.source || !opts.out) {
+  if (
+    (!opts.source && !(opts.glowfic && opts.glowfic.length > 0)) ||
+    !opts.out
+  ) {
     process.stderr.write(usage() + "\n");
     process.exit(2);
   }
 
-  const source = path.resolve(opts.source);
+  const source = opts.source ? path.resolve(opts.source) : "";
   const outDir = path.resolve(opts.out);
   const workspaceDir = path.resolve(
     opts.workspace || path.join(outDir, ".splice"),
   );
 
+  // Glowfic pipeline (when --glowfic provided)
+  if (opts.glowfic && opts.glowfic.length > 0) {
+    // Build assistant matcher: prefer explicit regex, else substring match for --assistant
+    let re: RegExp | null = null;
+    if (opts.assistantRegex && opts.assistantRegex.length) {
+      try {
+        re = new RegExp(opts.assistantRegex, "i");
+      } catch (e) {
+        logger("error", `Invalid --assistant-regex: ${(e as Error).message}`);
+        process.exit(2);
+      }
+    } else if (opts.assistant && opts.assistant.length) {
+      try {
+        re = new RegExp(opts.assistant, "i");
+      } catch (e) {
+        logger("error", `Invalid --assistant: ${(e as Error).message}`);
+        process.exit(2);
+      }
+    }
+    if (!re) {
+      logger(
+        "error",
+        "When using --glowfic, you must provide --assistant or --assistant-regex",
+      );
+      process.exit(2);
+    }
+    try {
+      const convs = await conversationsFromGlowficUrls(
+        opts.glowfic,
+        { displayName: re, handle: re, author: re } as any,
+        logger,
+        {
+          markdown: true,
+          mergeConsecutive: true,
+          trimToLastAssistant: true,
+        },
+      );
+      const outPath = path.join(outDir, "conversations_oai.jsonl");
+      if (opts.dryRun) {
+        logger(
+          "info",
+          `(dry-run) would write ${convs.length} segmented conversation(s) to ${outPath}`,
+        );
+      } else {
+        await fs.mkdir(path.dirname(outPath), { recursive: true });
+        const fh = await fs.open(outPath, "w");
+        const systemMessage =
+          process.env.SPLICE_SYSTEM_MESSAGE ?? opts.systemMessage;
+        for (const { messages } of convs) {
+          if (!messages.length) continue;
+          const record = {
+            messages: [{ role: "system", content: systemMessage }, ...messages],
+          };
+          await fh.write(JSON.stringify(record) + "\n");
+        }
+        await fh.close();
+        logger(
+          "info",
+          `Wrote ${convs.length} segmented conversation(s) to ${outPath}`,
+        );
+      }
+      logger("info", opts.dryRun ? "Dry run complete." : "Done.");
+      process.exit(0);
+    } catch (e) {
+      logger("error", (e as Error).message);
+      process.exit(1);
+    }
+  }
+
+  // Multi-adapter detection for Twitter and Bluesky
   const adapters = [
     {
       kind: "twitter",

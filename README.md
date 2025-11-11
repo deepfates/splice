@@ -18,7 +18,30 @@ Turn your archives into:
 - OAI-compatible JSONL for training/eval
 - A normalized JSONL dump for inspection and reuse
 
-Today it imports Twitter/X. The plan is to splice in other archives (Bluesky, ChatGPT, Reddit, Glowfic, Hugging Face, …) and let you pick the strands you want to weave into a training set.
+Today it imports Twitter/X and Glowfic. The plan is to splice in other archives (Bluesky, ChatGPT, Reddit, Hugging Face, …) and let you pick the strands you want to weave into a training set.
+
+Glowfic input (threads, sections, boards)
+- You can now target Glowfic threads, board sections, or entire boards by URL (examples: https://glowfic.com/posts/5506, https://glowfic.com/board_sections/703, https://glowfic.com/boards/215).
+- Under the hood we use the glowfic-dl library to fetch and parse content consistently (classic view).
+- Programmatic usage in splice:
+  - Import helpers from the library: `detectGlowficUri`, `fetchGlowficThreads`, `fetchGlowficThreadsMany`, `normalizeGlowficThread`, `normalizeGlowficThreadsToItems`, `conversationsFromGlowficUrl`, `conversationsFromGlowficUrls`, and `GlowficSourceAdapter`.
+  - Provide one or more Glowfic URLs and an assistant selector to build conversations where a specific character speaks as the assistant and all others are the user.
+  - Assistant selection options:
+    - Exact display name string (matches `character_display_name`, case-insensitive)
+    - Exact handle string (matches `character_handle`, case-insensitive)
+    - Regex match on display name, handle, or author
+    - Predicate function `(post) => boolean`
+  - Typical flow:
+    1) Choose your URL(s): thread/section/board.
+    2) Choose the assistant character (e.g., display name or handle).
+    3) Call `conversationsFromGlowficUrl(url, assistant)` (or the `...Urls` variant) to get arrays of `{ role: "assistant" | "user", content }`.
+    4) Feed those messages into your exporter or fine-tuning writer.
+- Notes:
+  - Markdown: Content is normalized to Markdown by default for training-friendly text; relative links/images are made absolute.
+  - If you want generic items instead of conversations, use `GlowficSourceAdapter.ingest(url, logger)` which returns normalized `ContentItem[]`.
+  - To mirror the Doctor Who “script” style, select the relevant character as the assistant and enable consecutive-message merging; trailing user-only tails are trimmed by default so conversations end on an assistant reply.
+- Install dependency:
+  - Add `glowfic-dl` to your project (Node 18+): `npm i glowfic-dl`
 
 This library started life as a Python script. This is a TypeScript rewrite where development will continue. It has powered projects like [deeperfates.com](https://deeperfates.com), [keltham.lol](https://keltham.lol), and [youaretheassistantnow.com](https://youaretheassistantnow.com).
 
@@ -236,7 +259,7 @@ Watch tests:
 
 ## Roadmap (short)
 
-- More inputs: Bluesky, Reddit, ChatGPT, Glowfic, HF datasets
+- More inputs: Bluesky, Reddit, ChatGPT, HF datasets (Glowfic done)
 - Checkpointing and resumable pipelines (JSONL-based manifests)
 - More outputs: ShareGPT enhancements, SQLite/Parquet/CSV
 - Better selection: persona/character filters, time ranges

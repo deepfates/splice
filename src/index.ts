@@ -16,9 +16,10 @@
 // Re-export shared types, args, logger, and utilities
 export * from "./core/types";
 
-// Re-export built-in Source(s)
+// Re-export built-in Sources
 export * from "./sources/twitter";
 export * from "./sources/bluesky";
+export * from "./sources/glowfic";
 
 // Re-export built-in Transforms
 export * from "./transforms/core";
