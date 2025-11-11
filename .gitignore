@@ -51,4 +51,5 @@ tmp/
 temp/
 
 # Test outputs
-out/
+out*/
+!src/outputs/

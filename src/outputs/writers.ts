@@ -141,14 +141,20 @@ export async function writeMarkdown(
     const name = sanitizeFilename(firstWords) || thread.id;
     const ymd = date.replace(/-/g, "");
     const filePath = path.join(threadsDir, `${ymd}/${name}.md`);
+    const filePathFlat = path.join(threadsDir, `${ymd}-${name}.md`);
     const topLink = `https://twitter.com/i/web/status/${first.id}`;
     const body = `${fm}\n${parts.join("\n\n")}\n\n[View on Twitter](${topLink})`;
+    const bodyFlat = body.replace(/\.\.\/\.\.\/images\//g, "../images/");
 
     if (dryRun) {
-      logger("info", `(dry-run) would write thread file: ${filePath}`);
+      logger(
+        "info",
+        `(dry-run) would write thread files: ${filePath} and ${filePathFlat}`,
+      );
     } else {
       await ensureDir(path.dirname(filePath));
       await fs.writeFile(filePath, body, "utf8");
+      await fs.writeFile(filePathFlat, bodyFlat, "utf8");
     }
   }
 
