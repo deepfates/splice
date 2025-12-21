@@ -411,6 +411,137 @@ export async function conversationsFromGlowficUrls(
   return out;
 }
 
+/* -------------------------- Multi-character helpers ------------------------ */
+
+/**
+ * Represents a unique character found in Glowfic threads.
+ */
+export interface GlowficCharacter {
+  /** Primary identifier: handle if available, else display name */
+  id: string;
+  handle: string | null;
+  displayName: string | null;
+  author: string | null;
+  postCount: number;
+}
+
+/**
+ * Extract all unique characters from a set of Glowfic threads.
+ * Characters are keyed by handle (preferred) or display name.
+ * Returns sorted by post count descending.
+ */
+export function extractUniqueCharacters(
+  threads: GlowThread[],
+): GlowficCharacter[] {
+  const charMap = new Map<string, GlowficCharacter>();
+
+  for (const thread of threads) {
+    for (const post of thread.posts || []) {
+      const handle = (post.character_handle || "").trim();
+      const displayName = (post.character_display_name || "").trim();
+      const author = (post.author || "").trim();
+      
+      // Use handle as primary key, fall back to display name
+      const id = handle || displayName || author || "unknown";
+      if (!id || id === "unknown") continue;
+
+      const existing = charMap.get(id);
+      if (existing) {
+        existing.postCount++;
+        // Fill in missing fields if available
+        if (!existing.handle && handle) existing.handle = handle;
+        if (!existing.displayName && displayName) existing.displayName = displayName;
+        if (!existing.author && author) existing.author = author;
+      } else {
+        charMap.set(id, {
+          id,
+          handle: handle || null,
+          displayName: displayName || null,
+          author: author || null,
+          postCount: 1,
+        });
+      }
+    }
+  }
+
+  // Sort by post count descending
+  return Array.from(charMap.values()).sort((a, b) => b.postCount - a.postCount);
+}
+
+/**
+ * Result of segmenting a board by all characters.
+ */
+export interface MultiCharacterResult {
+  character: GlowficCharacter;
+  /** Array of conversation segments, each is [user, assistant] pairs */
+  conversations: ChatMessage[][];
+  /** Total message count across all conversations */
+  messageCount: number;
+}
+
+/**
+ * Segment all threads for each unique character as the assistant.
+ * 
+ * @param threads - Pre-fetched Glowfic threads
+ * @param options - Configuration options
+ * @returns Array of results per character, sorted by conversation count
+ */
+export function segmentBoardByAllCharacters(
+  threads: GlowThread[],
+  options?: {
+    minPosts?: number;
+    markdown?: boolean;
+  },
+): MultiCharacterResult[] {
+  const minPosts = options?.minPosts ?? 10;
+  const characters = extractUniqueCharacters(threads);
+  
+  const results: MultiCharacterResult[] = [];
+  
+  for (const char of characters) {
+    // Skip characters below threshold
+    if (char.postCount < minPosts) continue;
+    
+    // Build a matcher for this character
+    const matcher: AssistantMatcher = (post) => {
+      const postHandle = (post.character_handle || "").trim().toLowerCase();
+      const postDisplay = (post.character_display_name || "").trim().toLowerCase();
+      const charId = char.id.toLowerCase();
+      return postHandle === charId || postDisplay === charId;
+    };
+    
+    // Collect all conversation segments for this character
+    const conversations: ChatMessage[][] = [];
+    let messageCount = 0;
+    
+    for (const thread of threads) {
+      const segments = segmentedConversationsFromGlowficThread(
+        thread,
+        matcher,
+        { markdown: options?.markdown !== false },
+      );
+      for (const msgs of segments) {
+        if (msgs.length > 0) {
+          conversations.push(msgs);
+          messageCount += msgs.length;
+        }
+      }
+    }
+    
+    // Only include if we got any conversations
+    if (conversations.length > 0) {
+      results.push({
+        character: char,
+        conversations,
+        messageCount,
+      });
+    }
+  }
+  
+  // Sort by number of conversations descending
+  return results.sort((a, b) => b.conversations.length - a.conversations.length);
+}
+
 /* ------------------------------- SourceAdapter ---------------------------- */
 
 import type { SourceAdapter, Logger } from "../index";

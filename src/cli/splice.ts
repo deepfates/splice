@@ -124,6 +124,9 @@ async function main() {
       "--glowfic",
       "--glowfic-url",
       "--glowfic-urls",
+      "--glowfic-board",
+      "--all-characters",
+      "--min-posts",
       "--assistant",
       "--assistant-regex",
       "--assistant-re",
@@ -163,7 +166,7 @@ async function main() {
   }
 
   if (
-    (!opts.source && !(opts.glowfic && opts.glowfic.length > 0)) ||
+    (!opts.source && !(opts.glowfic && opts.glowfic.length > 0) && !opts.glowficBoard) ||
     !opts.out
   ) {
     process.stderr.write(usage() + "\n");
@@ -175,6 +178,63 @@ async function main() {
   const workspaceDir = path.resolve(
     opts.workspace || path.join(outDir, ".splice"),
   );
+
+  // Glowfic multi-character board export (when --glowfic-board provided)
+  if (opts.glowficBoard) {
+    try {
+      logger("info", `Fetching Glowfic board: ${opts.glowficBoard}`);
+      
+      // Lazy-load Glowfic support
+      const {
+        fetchGlowficThreads,
+        segmentBoardByAllCharacters,
+        extractUniqueCharacters,
+      } = await import("../sources/glowfic");
+      const { writeHuggingFaceDataset } = await import("../outputs/hf-dataset");
+      
+      // Fetch all threads from the board (single request)
+      const threads = await fetchGlowficThreads(opts.glowficBoard, logger, {
+        markdown: true,
+      });
+      logger("info", `Fetched ${threads.length} thread(s)`);
+      
+      // Extract and log character stats
+      const allChars = extractUniqueCharacters(threads);
+      logger("info", `Found ${allChars.length} unique character(s)`);
+      logger("info", `Characters with ≥${opts.minPosts} posts: ${allChars.filter(c => c.postCount >= opts.minPosts).length}`);
+      
+      // Segment by all characters
+      const results = segmentBoardByAllCharacters(threads, {
+        minPosts: opts.minPosts,
+        markdown: true,
+      });
+      logger("info", `Generated datasets for ${results.length} character(s)`);
+      
+      // Extract source name from URL
+      const boardUrl = new URL(opts.glowficBoard);
+      const boardId = boardUrl.pathname.split("/").pop() || "board";
+      const sourceName = `Glowfic Board ${boardId}`;
+      
+      // Write HuggingFace dataset
+      const { characterCount, conversationCount } = await writeHuggingFaceDataset(
+        results,
+        {
+          outDir,
+          sourceName,
+          sourceUrl: opts.glowficBoard,
+          dryRun: opts.dryRun,
+          logger,
+        },
+      );
+      
+      logger("info", `Exported ${conversationCount} conversations across ${characterCount} characters`);
+      logger("info", opts.dryRun ? "Dry run complete." : "Done.");
+      process.exit(0);
+    } catch (e) {
+      logger("error", (e as Error).message);
+      process.exit(1);
+    }
+  }
 
   // Glowfic pipeline (when --glowfic provided)
   if (opts.glowfic && opts.glowfic.length > 0) {
