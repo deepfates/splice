@@ -92,6 +92,10 @@ export type CLIOptions = {
   glowfic?: string[]; // one or more Glowfic URLs (thread/section/board)
   assistant?: string; // case-insensitive match on character display name/handle/author
   assistantRegex?: string; // regex (JS) on display name/handle/author
+  // glowfic multi-character export
+  glowficBoard?: string; // single board URL for multi-character export
+  allCharacters: boolean; // export for all characters
+  minPosts: number; // minimum posts for character inclusion
 };
 
 export const DEFAULT_SYSTEM_MESSAGE = "You have been uploaded to the internet";
@@ -123,6 +127,10 @@ export function parseArgs(argv: string[]): CLIOptions {
     glowfic: [],
     assistant: undefined,
     assistantRegex: undefined,
+    // glowfic multi-character export
+    glowficBoard: undefined,
+    allCharacters: false,
+    minPosts: 10,
   };
 
   const args = argv.slice(2);
@@ -228,6 +236,13 @@ export function parseArgs(argv: string[]): CLIOptions {
       }
     } else if (a === "--ids-file") {
       opts.idsFile = args[++i];
+    } else if (a === "--glowfic-board") {
+      opts.glowficBoard = args[++i];
+    } else if (a === "--all-characters") {
+      opts.allCharacters = true;
+    } else if (a === "--min-posts") {
+      const v = parseInt(args[++i] ?? "", 10);
+      if (!Number.isNaN(v)) opts.minPosts = v;
     } else if (a === "--") {
       break;
     } else if (a.startsWith("-")) {
@@ -273,6 +288,9 @@ export function usage(): string {
     "  --glowfic <url...>         One or more Glowfic URLs (thread, section, or board)",
     "  --assistant <text>         Assistant selector (case-insensitive match on character display name, handle, or author)",
     "  --assistant-regex <re>     Assistant selector regex (JavaScript), tested on display name, handle, or author",
+    "  --glowfic-board <url>      Single board URL for multi-character export",
+    "  --all-characters           Export datasets for all characters (with --glowfic-board)",
+    "  --min-posts <n>            Minimum posts for character inclusion (default: 10)",
     "",
     "Examples:",
     "  splice --source ./archive --out ./out --format markdown oai json",
@@ -282,6 +300,7 @@ export function usage(): string {
     "  splice --version",
     "  splice --glowfic https://glowfic.com/posts/5506 --out ./out --format oai --assistant carissa",
     '  splice --glowfic https://glowfic.com/boards/215 --out ./out --format oai --assistant-regex "carissa"',
+    "  splice --glowfic-board https://glowfic.com/boards/215 --out ./out --all-characters --min-posts 20",
     "",
     "Docs: https://github.com/deepfates/splice • Context: https://deepfates.com/convert-your-twitter-archive-into-training-data",
   ].join("\n");
