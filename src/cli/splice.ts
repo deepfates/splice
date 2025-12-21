@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { CLIOptions, parseArgs, makeLogger, usage } from "../core/types";
 
 import { detectTwitterArchive, ingestTwitter } from "../sources/twitter";
+// Glowfic support is loaded dynamically when needed to avoid ESM/undici issues on Node 18
 import {
   applyFilters,
   indexById,
@@ -118,6 +119,15 @@ async function main() {
       "--status",
       "--ids",
       "--ids-file",
+      "--glowfic",
+      "--glowfic-url",
+      "--glowfic-urls",
+      "--glowfic-board",
+      "--all-characters",
+      "--min-posts",
+      "--assistant",
+      "--assistant-regex",
+      "--assistant-re",
       "--",
     ]);
     const unknown = argv.filter(
@@ -153,17 +163,149 @@ async function main() {
     }
   }
 
-  if (!opts.source || !opts.out) {
+  if (
+    (!opts.source && !(opts.glowfic && opts.glowfic.length > 0) && !opts.glowficBoard) ||
+    !opts.out
+  ) {
     process.stderr.write(usage() + "\n");
     process.exit(2);
   }
 
-  const source = path.resolve(opts.source);
+  const source = opts.source ? path.resolve(opts.source) : "";
   const outDir = path.resolve(opts.out);
   const workspaceDir = path.resolve(
     opts.workspace || path.join(outDir, ".splice"),
   );
 
+  // Glowfic multi-character board export (when --glowfic-board provided)
+  if (opts.glowficBoard) {
+    try {
+      logger("info", `Fetching Glowfic board: ${opts.glowficBoard}`);
+      
+      // Lazy-load Glowfic support
+      const {
+        fetchGlowficThreads,
+        segmentBoardByAllCharacters,
+        extractUniqueCharacters,
+      } = await import("../sources/glowfic");
+      const { writeHuggingFaceDataset } = await import("../outputs/hf-dataset");
+      
+      // Fetch all threads from the board (single request)
+      const threads = await fetchGlowficThreads(opts.glowficBoard, logger, {
+        markdown: true,
+      });
+      logger("info", `Fetched ${threads.length} thread(s)`);
+      
+      // Extract and log character stats
+      const allChars = extractUniqueCharacters(threads);
+      logger("info", `Found ${allChars.length} unique character(s)`);
+      logger("info", `Characters with ≥${opts.minPosts} posts: ${allChars.filter(c => c.postCount >= opts.minPosts).length}`);
+      
+      // Segment by all characters
+      const results = segmentBoardByAllCharacters(threads, {
+        minPosts: opts.minPosts,
+        markdown: true,
+      });
+      logger("info", `Generated datasets for ${results.length} character(s)`);
+      
+      // Extract source name from URL
+      const boardUrl = new URL(opts.glowficBoard);
+      const boardId = boardUrl.pathname.split("/").pop() || "board";
+      const sourceName = `Glowfic Board ${boardId}`;
+      
+      // Write HuggingFace dataset
+      const { characterCount, conversationCount } = await writeHuggingFaceDataset(
+        results,
+        {
+          outDir,
+          sourceName,
+          sourceUrl: opts.glowficBoard,
+          dryRun: opts.dryRun,
+          logger,
+        },
+      );
+      
+      logger("info", `Exported ${conversationCount} conversations across ${characterCount} characters`);
+      logger("info", opts.dryRun ? "Dry run complete." : "Done.");
+      process.exit(0);
+    } catch (e) {
+      logger("error", (e as Error).message);
+      process.exit(1);
+    }
+  }
+
+  // Glowfic pipeline (when --glowfic provided)
+  if (opts.glowfic && opts.glowfic.length > 0) {
+    // Build assistant matcher: prefer explicit regex, else substring match for --assistant
+    let re: RegExp | null = null;
+    if (opts.assistantRegex && opts.assistantRegex.length) {
+      try {
+        re = new RegExp(opts.assistantRegex, "i");
+      } catch (e) {
+        logger("error", `Invalid --assistant-regex: ${(e as Error).message}`);
+        process.exit(2);
+      }
+    } else if (opts.assistant && opts.assistant.length) {
+      try {
+        re = new RegExp(opts.assistant, "i");
+      } catch (e) {
+        logger("error", `Invalid --assistant: ${(e as Error).message}`);
+        process.exit(2);
+      }
+    }
+    if (!re) {
+      logger(
+        "error",
+        "When using --glowfic, you must provide --assistant or --assistant-regex",
+      );
+      process.exit(2);
+    }
+    try {
+      // Lazy-load Glowfic support to avoid undici import on Node 18 when not used
+      const { conversationsFromGlowficUrls } = await import(
+        "../sources/glowfic"
+      );
+      const convs = await conversationsFromGlowficUrls(
+        opts.glowfic,
+        { displayName: re, handle: re, author: re } as any,
+        logger,
+        {
+          markdown: true,
+          mergeConsecutive: true,
+          trimToLastAssistant: true,
+        },
+      );
+      const outPath = path.join(outDir, "conversations_oai.jsonl");
+      if (opts.dryRun) {
+        logger(
+          "info",
+          `(dry-run) would write ${convs.length} segmented conversation(s) to ${outPath}`,
+        );
+      } else {
+        await fs.mkdir(path.dirname(outPath), { recursive: true });
+        const fh = await fs.open(outPath, "w");
+        const systemMessage =
+          process.env.SPLICE_SYSTEM_MESSAGE ?? opts.systemMessage;
+        for (const { messages } of convs) {
+          if (!messages.length) continue;
+          const record = {
+            messages: [{ role: "system", content: systemMessage }, ...messages],
+          };
+          await fh.write(JSON.stringify(record) + "\n");
+        }
+        await fh.close();
+        logger(
+          "info",
+          `Wrote ${convs.length} segmented conversation(s) to ${outPath}`,
+        );
+      }
+      logger("info", opts.dryRun ? "Dry run complete." : "Done.");
+      process.exit(0);
+    } catch (e) {
+      logger("error", (e as Error).message);
+      process.exit(1);
+    }
+  }
   const detected = await detectTwitterArchive(source);
   if (!detected) {
     logger(

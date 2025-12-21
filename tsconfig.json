@@ -15,6 +15,7 @@
       "@cli/*": ["src/cli/*"]
     },
     "types": ["node"],
+    "typeRoots": ["./src/externals", "./node_modules/@types"],
     "resolveJsonModule": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,

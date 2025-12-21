@@ -243,13 +243,19 @@ describe("splice CLI integration", () => {
 
         // Check that we have exactly one thread (root + self-reply only)
         const threadsDir = path.join(tempOut, "threads");
-        const threadFiles = await fs.readdir(threadsDir);
+        // Threads are nested in date subdirectories (YYYYMMDD/)
+        const threadSubdirs = (await fs.readdir(threadsDir, { withFileTypes: true }))
+          .filter((d) => d.isDirectory())
+          .map((d) => d.name);
+        expect(threadSubdirs.length).toBe(1);
+        const threadYmdDir = path.join(threadsDir, threadSubdirs[0]);
+        const threadFiles = await fs.readdir(threadYmdDir);
         const mdFiles = threadFiles.filter((f) => f.endsWith(".md"));
         expect(mdFiles.length).toBe(1);
 
         // Read the thread content
         const threadContent = await fs.readFile(
-          path.join(threadsDir, mdFiles[0]),
+          path.join(threadYmdDir, mdFiles[0]),
           "utf8",
         );
 
