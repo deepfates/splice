@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { CLIOptions, parseArgs, makeLogger, usage } from "../core/types";
 
 import { detectTwitterArchive, ingestTwitter } from "../sources/twitter";
+import { detectBlueskyCar, ingestBlueskyCar } from "../sources/bluesky";
 import {
   applyFilters,
   indexById,
@@ -164,18 +165,42 @@ async function main() {
     opts.workspace || path.join(outDir, ".splice"),
   );
 
-  const detected = await detectTwitterArchive(source);
-  if (!detected) {
+  const adapters = [
+    {
+      kind: "twitter",
+      detect: detectTwitterArchive,
+      ingest: ingestTwitter,
+    },
+    {
+      kind: "bluesky",
+      detect: detectBlueskyCar,
+      ingest: ingestBlueskyCar,
+    },
+  ] as const;
+
+  let selected:
+    | (typeof adapters)[number]
+    | null = null;
+  for (const adapter of adapters) {
+    // eslint-disable-next-line no-await-in-loop
+    const matches = await adapter.detect(source);
+    if (matches) {
+      selected = adapter;
+      break;
+    }
+  }
+  if (!selected) {
     logger(
       "error",
-      `Could not detect a Twitter archive at ${source} (missing data/manifest.js)`,
+      `Could not detect a supported archive at ${source} (expected Twitter directory or Bluesky .car file)`,
     );
     process.exit(2);
   }
+  logger("info", `Detected source: ${selected.kind}`);
 
   try {
-    logger("info", `Ingesting from ${source}`);
-    const items = await ingestTwitter(source, logger);
+    logger("info", `Ingesting ${selected.kind} data from ${source}`);
+    const items = await selected.ingest(source, logger);
 
     const filtered = applyFilters(items, {
       since: opts.since,
@@ -337,7 +362,15 @@ async function main() {
         const manifest = createCheckpointManifest({
           parentId: (latest && latest.id) || null,
           itemsRef: itemsRefAll,
-          sourceRefs: [{ kind: "twitter", uri: source }],
+          sourceRefs: [
+            {
+              kind: selected.kind,
+              uri:
+                selected.kind === "bluesky"
+                  ? items[0]?.accountId ?? source
+                  : source,
+            },
+          ],
           transforms,
           decisionsRef,
           materialized: { threadsRef, conversationsRef },

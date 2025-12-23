@@ -6,6 +6,8 @@ import {
   isRetweet,
 } from "../core/types";
 
+const SELF_POST_SOURCES = new Set(["twitter:tweet", "bluesky:post"]);
+
 /**
  * Replace shortened URLs with expanded; strip t.co links, mentions, hashtags.
  * Preserve paragraph breaks; collapse intra-line spaces and trim.
@@ -108,7 +110,9 @@ export function groupThreadsAndConversations(
     }
     for (const c of chain) processed.add(c.id);
 
-    const allTweets = chain.every((c) => c.source === "twitter:tweet");
+    const allSelfPosts = chain.every((c) =>
+      SELF_POST_SOURCES.has(c.source),
+    );
 
     // Check if this is a self-thread (all tweets are self-replies)
     // A tweet is a self-reply if:
@@ -130,7 +134,7 @@ export function groupThreadsAndConversations(
       return true;
     });
 
-    if (allTweets && isSelfThread) {
+    if (allSelfPosts && isSelfThread) {
       const ordered = chain.slice().reverse(); // oldest → newest
       threads.push({ id: ordered[0].id, items: ordered });
     } else {

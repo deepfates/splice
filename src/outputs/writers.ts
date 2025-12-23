@@ -1,9 +1,11 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { AtUri } from "@atproto/api";
 import {
   ContentItem,
   Thread,
   Level,
+  MediaAttachment,
   formatIsoDateOnly,
   sanitizeFilename,
   isRetweet,
@@ -24,7 +26,7 @@ async function ensureDir(p: string) {
 async function copyMedia(
   items: ContentItem[],
   imagesDir: string,
-  logger: (l: Level, m: string) => void,
+  logger: (l: Level, m: string) => void
 ) {
   await ensureDir(imagesDir);
   for (const it of items) {
@@ -32,18 +34,60 @@ async function copyMedia(
       const base = m.absPath ? path.basename(m.absPath) : `${m.id}.bin`;
       try {
         if (!m.absPath) {
-          logger("warn", `No absPath for media ${m.id}; skipping copy`);
+          logger("debug", `No absPath for media ${m.id}; skipping copy`);
           continue;
         }
         await fs.copyFile(m.absPath, path.join(imagesDir, `_${base}`));
       } catch (e) {
         logger(
           "warn",
-          `Failed to copy media ${m.absPath ?? m.id}: ${(e as Error).message}`,
+          `Failed to copy media ${m.absPath ?? m.id}: ${(e as Error).message}`
         );
       }
     }
   }
+}
+
+const SELF_POST_SOURCES = new Set(["twitter:tweet", "bluesky:post"]);
+
+function isSelfAuthoredPost(item: ContentItem): boolean {
+  return SELF_POST_SOURCES.has(item.source);
+}
+
+function isReshare(item: ContentItem): boolean {
+  return item.source === "twitter:tweet" && isRetweet(item.text);
+}
+
+function mediaMarkdownLinks(media?: MediaAttachment[]): string[] {
+  if (!media) return [];
+  return media
+    .filter((m) => !!m.absPath)
+    .map((m) => {
+      const base = path.basename(m.absPath as string);
+      return `![${base}](../../images/_${base})`;
+    });
+}
+
+function buildPermalink(item: ContentItem): { url: string; label: string } | null {
+  if (item.source === "twitter:tweet") {
+    return {
+      url: `https://twitter.com/i/web/status/${item.id}`,
+      label: "Twitter",
+    };
+  }
+  if (item.source === "bluesky:post") {
+    try {
+      const uri = new AtUri(item.id);
+      if (!uri.host || !uri.rkey) return null;
+      return {
+        url: `https://bsky.app/profile/${uri.host}/post/${uri.rkey}`,
+        label: "Bluesky",
+      };
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 /**
@@ -83,8 +127,8 @@ function isolateQuotedTweetLinks(text: string): string {
 
 /**
  * Write Markdown outputs:
- * - threads/&lt;yyyymmdd&gt;-thread-&lt;slug&gt;.md with frontmatter, cleaned text, media links, and link to Twitter
- * - tweets/&lt;yyyymmdd&gt;-tweet-&lt;slug&gt;.md for non-thread tweets (excluding RTs)
+ * - threads/&lt;yyyymmdd&gt;-thread-&lt;slug&gt;.md with frontmatter, cleaned text, media links, and link to the source platform
+ * - tweets/&lt;yyyymmdd&gt;-tweet-&lt;slug&gt;.md for non-thread posts (excluding reshares)
  * - images/_&lt;file&gt; copied for referenced items
  */
 export async function writeMarkdown(
@@ -92,7 +136,7 @@ export async function writeMarkdown(
   items: ContentItem[],
   outDir: string,
   logger: (l: Level, m: string) => void,
-  dryRun: boolean,
+  dryRun: boolean
 ) {
   const threadsDir = path.join(outDir, "threads");
   const tweetsDir = path.join(outDir, "tweets");
@@ -108,13 +152,10 @@ export async function writeMarkdown(
   const realThreads = threads.filter((t) => t.items.length > 1);
   const threadItems = realThreads.flatMap((t) => t.items);
   const threadIds = new Set(threadItems.map((i) => i.id));
-  const nonThreadTweets = items.filter(
-    (i) =>
-      i.source === "twitter:tweet" &&
-      !threadIds.has(i.id) &&
-      !isRetweet(i.text),
+  const nonThreadPosts = items.filter(
+    (i) => isSelfAuthoredPost(i) && !threadIds.has(i.id) && !isReshare(i)
   );
-  const copyPool = threadItems.concat(nonThreadTweets);
+  const copyPool = threadItems.concat(nonThreadPosts);
 
   logger("info", `Preparing media for ${copyPool.length} items`);
   if (!dryRun) await copyMedia(copyPool, imagesDir, logger);
@@ -128,21 +169,25 @@ export async function writeMarkdown(
 
     const parts: string[] = [];
     for (const t of thread.items) {
-      const mediaLinks = (t.media ?? []).map((m) => {
-        const base = m.absPath ? path.basename(m.absPath) : `${m.id}.bin`;
-        return `![${base}](../../images/_${base})`;
-      });
+      const mediaLinks = mediaMarkdownLinks(t.media);
       const cleaned = cleanText(t.text, (t.raw as any)?.entities);
       const prepared = isolateQuotedTweetLinks(cleaned);
-      parts.push(`${prepared}\n\n${mediaLinks.join("\n")}`.trim());
+      const segments = [prepared];
+      if (mediaLinks.length) {
+        segments.push(mediaLinks.join("\n"));
+      }
+      parts.push(segments.filter(Boolean).join("\n\n").trim());
     }
 
     const firstWords = thread.items[0].text.split(/\s+/).slice(0, 5).join(" ");
     const name = sanitizeFilename(firstWords) || thread.id;
     const ymd = date.replace(/-/g, "");
     const filePath = path.join(threadsDir, `${ymd}/${name}.md`);
-    const topLink = `https://twitter.com/i/web/status/${first.id}`;
-    const body = `${fm}\n${parts.join("\n\n")}\n\n[View on Twitter](${topLink})`;
+    const permalink = buildPermalink(first);
+    const footer = permalink
+      ? `\n\n[View on ${permalink.label}](${permalink.url})`
+      : "";
+    const body = `${fm}\n${parts.join("\n\n")}${footer}`;
 
     if (dryRun) {
       logger("info", `(dry-run) would write thread file: ${filePath}`);
@@ -152,25 +197,22 @@ export async function writeMarkdown(
     }
   }
 
-  // Save non-thread tweets by date
-  // Save single tweets (non-RTs not part of multi-tweet threads) as individual files in tweets/
-  for (const t of nonThreadTweets) {
+  // Save single posts (non-reshares not part of multi-item threads) as individual files in tweets/
+  for (const t of nonThreadPosts) {
     const date = formatIsoDateOnly(t.createdAt);
     const ymd = date.replace(/-/g, "");
     const fm = `---\nDate: ${date}\n---\n`;
-    const images = (t.media ?? [])
-      .map((m) => {
-        const base = m.absPath ? path.basename(m.absPath) : `${m.id}.bin`;
-        return `![${base}](../../images/_${base})`;
-      })
-      .join("\n");
+    const images = mediaMarkdownLinks(t.media).join("\n");
     const cleaned = cleanText(t.text, (t.raw as any)?.entities);
     const prepared = isolateQuotedTweetLinks(cleaned);
     const withImages = images ? `${prepared}\n\n${images}` : prepared;
     const words = t.text.split(/\s+/).slice(0, 5).join(" ");
     const slug = sanitizeFilename(words) || t.id;
-    const topLink = `https://twitter.com/i/web/status/${t.id}`;
-    const content = `${fm}\n${withImages}\n\n[View on Twitter](${topLink})`;
+    const permalink = buildPermalink(t);
+    const footer = permalink
+      ? `\n\n[View on ${permalink.label}](${permalink.url})`
+      : "";
+    const content = `${fm}\n${withImages}${footer}`;
     const filePath = path.join(tweetsDir, `${ymd}/${slug}.md`);
     if (dryRun) {
       logger("info", `(dry-run) would write tweet file: ${filePath}`);
@@ -191,7 +233,7 @@ export async function writeOAI(
   outDir: string,
   systemMessage: string,
   logger: (l: Level, m: string) => void,
-  dryRun: boolean,
+  dryRun: boolean
 ) {
   const outPath = path.join(outDir, "conversations_oai.jsonl");
   if (dryRun) {
@@ -223,7 +265,7 @@ export async function writeNormalizedJSONL(
   items: ContentItem[],
   outDir: string,
   logger: (l: Level, m: string) => void,
-  dryRun: boolean,
+  dryRun: boolean
 ) {
   const outPath = path.join(outDir, "normalized_items.jsonl");
   if (dryRun) {
@@ -247,7 +289,7 @@ export async function writeShareGPT(
   conversations: ContentItem[][],
   outDir: string,
   logger: (l: Level, m: string) => void,
-  dryRun: boolean,
+  dryRun: boolean
 ) {
   const outPath = path.join(outDir, "sharegpt.json");
   if (dryRun) {
@@ -282,7 +324,7 @@ export async function writeStatsJSON(
   conversations: ContentItem[][],
   outDir: string,
   logger: (l: Level, m: string) => void,
-  dryRun: boolean,
+  dryRun: boolean
 ) {
   const outPath = path.join(outDir, "stats.json");
   const dates = items

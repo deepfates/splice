@@ -18,6 +18,7 @@ export * from "./core/types";
 
 // Re-export built-in Source(s)
 export * from "./sources/twitter";
+export * from "./sources/bluesky";
 
 // Re-export built-in Transforms
 export * from "./transforms/core";

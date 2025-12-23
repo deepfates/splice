@@ -90,7 +90,7 @@ export const DEFAULT_SYSTEM_MESSAGE = "You have been uploaded to the internet";
 
 export function parseArgs(argv: string[]): CLIOptions {
   const opts: CLIOptions = {
-    format: ["markdown", "oai"],
+    format: ["markdown", "oai", "json"],
     systemMessage: DEFAULT_SYSTEM_MESSAGE,
     dryRun: false,
     logLevel: "info",
