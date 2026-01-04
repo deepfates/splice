@@ -153,8 +153,13 @@ export function groupThreadsAndConversations(
  * - Trim trailing user messages to end on assistant if possible.
  */
 export function inferRole(it: ContentItem): Role {
-  // Heuristic: tweets that look like assistant outputs (e.g., have full_text) are "assistant"; others are "user"
-  return it.raw && "full_text" in (it.raw as any) ? "assistant" : "user";
+  // Twitter: has full_text in raw (from archive owner's tweets)
+  if (it.raw && "full_text" in (it.raw as any)) return "assistant";
+
+  // Bluesky: the archive only contains our posts, so all bluesky:post items are "assistant"
+  if (it.source === "bluesky:post") return "assistant";
+
+  return "user";
 }
 
 export function messagesFromConversation(items: ContentItem[]): ChatMessage[] {
