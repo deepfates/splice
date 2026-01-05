@@ -24,9 +24,9 @@ export function cleanText(
   }
   // Normalize line endings
   t = t.replace(/\r\n?/g, "\n");
-  // Remove t.co links, mentions, and hashtags
+  // Remove t.co links, mentions (including Bluesky domain-style), and hashtags
   t = t.replace(/https:\/\/t\.co\/\w+/g, "");
-  t = t.replace(/@\w+/g, "");
+  t = t.replace(/@[\w.-]+/g, ""); // Matches @user, @user.bsky.social, @berduck.deepfates.com
   t = t.replace(/#\w+/g, "");
   // Collapse spaces/tabs within lines while preserving paragraph breaks
   t = t
