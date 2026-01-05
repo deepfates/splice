@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 This project follows Conventional Commits and semantic versioning.
 Dates are in YYYY-MM-DD.
 
+## Unreleased
+
+### Added
+- **Glowfic source adapter**: Ingest collaborative fiction from glowfic.com
+  - `--glowfic <url>` for threads, sections, or boards
+  - `--assistant <name>` to select which character becomes the assistant role
+  - `--assistant-regex <pattern>` for complex character matching
+  - 827 conversations from a single Planecrash thread (test)
+- **Multi-character board export**: Create datasets for all characters at once
+  - `--glowfic-board <url> --all-characters` for bulk export
+  - `--min-posts <n>` to filter characters by activity (default: 10)
+  - HuggingFace-compatible dataset structure with per-character splits
+- Lazy-load Glowfic module for Node 18 compatibility
+
+### Fixed
+- Threads now correctly exclude replies from other users
+  - Added `accountId` and `inReplyToUserId` fields to `ContentItem` type
+  - Replies from others are still captured in normalized output but excluded from thread files
+
+### Performance
+- **Media indexing optimization**: O(n) instead of O(n²)
+  - Processing 767k tweets with 12k media files: ~39 seconds (down from potentially hours)
+
 ## [0.2.0] - 2026-01-04
 
 ### Added
@@ -27,24 +50,6 @@ Dates are in YYYY-MM-DD.
 - JSON now included in default output formats
 
 [0.2.0]: https://github.com/deepfates/splice/compare/v0.1.2...v0.2.0
-
-## Unreleased
-
-### Fixed
-- Threads now correctly exclude replies from other users. Previously, if someone replied to your tweet, that reply would be included in your thread output. Now threads only include self-replies (where `in_reply_to_user_id` matches your account ID).
-  - Added `accountId` and `inReplyToUserId` fields to `ContentItem` type
-  - Updated Twitter source adapter to read account ID from `data/account.js`
-  - Updated Twitter source adapter to extract `in_reply_to_user_id` from tweets
-  - Modified `groupThreadsAndConversations` to filter threads to only include self-replies
-  - Replies from others are still captured in normalized output but excluded from thread files
-
-### Performance
-- **Major optimization**: Media file indexing is now O(n) instead of O(n²). Previously, for each tweet we would read the entire media directory to find matching files. Now we build a single media map upfront, reducing processing time from minutes to seconds for large archives.
-  - Processing 767k tweets with 12k media files now takes ~39 seconds (down from potentially hours)
-  - Replaced per-tweet `getMediaFiles()` calls with a single `buildMediaMap()` call at ingestion start
-
-This project follows Conventional Commits and semantic versioning.
-Dates are in YYYY-MM-DD.
 
 ## [0.1.1] - 2025-10-15
 
@@ -120,7 +125,7 @@ Dates are in YYYY-MM-DD.
 
 ### Docs
 - README with quick start, concise usage, and short roadmap.
-- Link to context post: “Convert your Twitter archive into training data”.
+- Link to context post: "Convert your Twitter archive into training data".
 
 ### License
 - MIT license added.
