@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 This project follows Conventional Commits and semantic versioning.
 Dates are in YYYY-MM-DD.
 
-## Unreleased
+## [0.3.0] - 2026-01-04
 
 ### Added
 - **Glowfic source adapter**: Ingest collaborative fiction from glowfic.com
@@ -48,6 +48,8 @@ Dates are in YYYY-MM-DD.
 
 ### Changed
 - JSON now included in default output formats
+
+[0.3.0]: https://github.com/deepfates/splice/compare/v0.2.0...v0.3.0
 
 [0.2.0]: https://github.com/deepfates/splice/compare/v0.1.2...v0.2.0
 
