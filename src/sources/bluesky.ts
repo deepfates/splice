@@ -165,56 +165,91 @@ function makeBlobAttachment(
 
 const BSKY_PUBLIC_API = "https://public.api.bsky.app";
 
+interface ThreadPost {
+  $type?: string;
+  post?: {
+    uri: string;
+    cid: string;
+    author: { did: string; handle: string; displayName?: string };
+    record: { text?: string; createdAt?: string; reply?: any };
+  };
+  parent?: ThreadPost;
+}
+
 /**
- * Fetch a single post from the public Bluesky API.
- * Returns null if the post is deleted/blocked/not found.
+ * Extract a ContentItem from a thread post object.
  */
-async function fetchPost(
+function threadPostToItem(tp: ThreadPost, parentUri: string | null): ContentItem | null {
+  if (!tp.post) return null;
+  const post = tp.post;
+  const record = post.record;
+  const author = post.author;
+  
+  return {
+    id: post.uri,
+    text: record.text ?? "",
+    createdAt: record.createdAt ? toIso(record.createdAt) : new Date().toISOString(),
+    parentId: parentUri,
+    inReplyToUserId: parentUri ? null : null, // We don't track this for fetched posts
+    accountId: author.did,
+    source: "bluesky:fetched",
+    raw: {
+      uri: post.uri,
+      cid: post.cid,
+      author: {
+        did: author.did,
+        handle: author.handle,
+        displayName: author.displayName,
+      },
+      record,
+    },
+    media: [],
+  };
+}
+
+/**
+ * Fetch a post and its full parent chain from the public Bluesky API.
+ * Returns all posts in the chain (newest first), or empty array if not found.
+ */
+async function fetchPostChain(
   uri: string,
   logger: (l: Level, m: string) => void,
-): Promise<ContentItem | null> {
-  const url = `${BSKY_PUBLIC_API}/xrpc/app.bsky.feed.getPostThread?uri=${encodeURIComponent(uri)}&depth=0&parentHeight=0`;
+): Promise<ContentItem[]> {
+  const url = `${BSKY_PUBLIC_API}/xrpc/app.bsky.feed.getPostThread?uri=${encodeURIComponent(uri)}&depth=0&parentHeight=50`;
   try {
     const res = await fetch(url);
     if (!res.ok) {
       if (res.status === 404 || res.status === 400) {
         logger("debug", `Post not found: ${uri}`);
-        return null;
+        return [];
       }
       throw new Error(`API error ${res.status}`);
     }
-    const data = await res.json() as { thread?: { $type?: string; post?: any } };
+    const data = await res.json() as { thread?: ThreadPost };
     const thread = data.thread;
     if (!thread || thread.$type !== "app.bsky.feed.defs#threadViewPost") {
-      return null;
+      return [];
     }
-    const post = thread.post;
-    const record = post.record as { text?: string; createdAt?: string };
-    const author = post.author as { did: string; handle: string; displayName?: string };
     
-    return {
-      id: post.uri,
-      text: record.text ?? "",
-      createdAt: record.createdAt ? toIso(record.createdAt) : new Date().toISOString(),
-      parentId: null, // We don't recurse further
-      inReplyToUserId: null,
-      accountId: author.did,
-      source: "bluesky:fetched",
-      raw: {
-        uri: post.uri,
-        cid: post.cid,
-        author: {
-          did: author.did,
-          handle: author.handle,
-          displayName: author.displayName,
-        },
-        record,
-      },
-      media: [],
-    };
+    // Walk up the parent chain and collect all posts
+    const posts: ContentItem[] = [];
+    let current: ThreadPost | undefined = thread;
+    let childUri: string | null = null;
+    
+    while (current && current.$type === "app.bsky.feed.defs#threadViewPost" && current.post) {
+      // Determine parent URI for this post
+      const parentUri = current.parent?.post?.uri ?? null;
+      const item = threadPostToItem(current, parentUri);
+      if (item) {
+        posts.push(item);
+      }
+      current = current.parent;
+    }
+    
+    return posts; // newest first (the requested post, then its parent, grandparent, etc.)
   } catch (e) {
     logger("warn", `Failed to fetch ${uri}: ${(e as Error).message}`);
-    return null;
+    return [];
   }
 }
 
@@ -241,9 +276,10 @@ export async function enrichBlueskyPosts(
     return items;
   }
   
-  logger("info", `Fetching ${parentUris.size} parent posts from Bluesky API...`);
+  logger("info", `Fetching thread context for ${parentUris.size} parent posts from Bluesky API...`);
   
   const fetched: ContentItem[] = [];
+  const fetchedIds = new Set<string>();
   const uriList = Array.from(parentUris);
   let completed = 0;
   
@@ -254,16 +290,22 @@ export async function enrichBlueskyPosts(
   for (let i = 0; i < uriList.length; i += BATCH_SIZE) {
     const batch = uriList.slice(i, i + BATCH_SIZE);
     const results = await Promise.all(
-      batch.map(uri => fetchPost(uri, logger))
+      batch.map(uri => fetchPostChain(uri, logger))
     );
     
-    for (const result of results) {
-      if (result) fetched.push(result);
+    // Flatten and dedupe (same parent may appear in multiple chains)
+    for (const chain of results) {
+      for (const item of chain) {
+        if (!existingIds.has(item.id) && !fetchedIds.has(item.id)) {
+          fetched.push(item);
+          fetchedIds.add(item.id);
+        }
+      }
     }
     
     completed += batch.length;
     if (completed % 500 === 0 || completed === uriList.length) {
-      logger("info", `Fetched ${completed}/${uriList.length} parent posts (${fetched.length} successful)`);
+      logger("info", `Fetched ${completed}/${uriList.length} thread contexts (${fetched.length} unique posts)`);
     }
     
     // Rate limit delay
@@ -272,7 +314,7 @@ export async function enrichBlueskyPosts(
     }
   }
   
-  logger("info", `Enrichment complete: fetched ${fetched.length} parent posts`);
+  logger("info", `Enrichment complete: fetched ${fetched.length} unique context posts`);
   
   return [...items, ...fetched];
 }
