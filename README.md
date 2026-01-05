@@ -18,30 +18,13 @@ Turn your archives into:
 - OAI-compatible JSONL for training/eval
 - A normalized JSONL dump for inspection and reuse
 
-Today it imports Twitter/X, Bluesky, and Glowfic. The plan is to splice in other archives (ChatGPT, Reddit, Hugging Face, …) and let you pick the strands you want to weave into a training set.
+Today it supports:
 
-Glowfic input (threads, sections, boards)
-- You can now target Glowfic threads, board sections, or entire boards by URL (examples: https://glowfic.com/posts/5506, https://glowfic.com/board_sections/703, https://glowfic.com/boards/215).
-- Under the hood we use the glowfic-dl library to fetch and parse content consistently (classic view).
-- Programmatic usage in splice:
-  - Import helpers from the library: `detectGlowficUri`, `fetchGlowficThreads`, `fetchGlowficThreadsMany`, `normalizeGlowficThread`, `normalizeGlowficThreadsToItems`, `conversationsFromGlowficUrl`, `conversationsFromGlowficUrls`, and `GlowficSourceAdapter`.
-  - Provide one or more Glowfic URLs and an assistant selector to build conversations where a specific character speaks as the assistant and all others are the user.
-  - Assistant selection options:
-    - Exact display name string (matches `character_display_name`, case-insensitive)
-    - Exact handle string (matches `character_handle`, case-insensitive)
-    - Regex match on display name, handle, or author
-    - Predicate function `(post) => boolean`
-  - Typical flow:
-    1) Choose your URL(s): thread/section/board.
-    2) Choose the assistant character (e.g., display name or handle).
-    3) Call `conversationsFromGlowficUrl(url, assistant)` (or the `...Urls` variant) to get arrays of `{ role: "assistant" | "user", content }`.
-    4) Feed those messages into your exporter or fine-tuning writer.
-- Notes:
-  - Markdown: Content is normalized to Markdown by default for training-friendly text; relative links/images are made absolute.
-  - If you want generic items instead of conversations, use `GlowficSourceAdapter.ingest(url, logger)` which returns normalized `ContentItem[]`.
-  - To mirror the Doctor Who “script” style, select the relevant character as the assistant and enable consecutive-message merging; trailing user-only tails are trimmed by default so conversations end on an assistant reply.
-- Install dependency:
-  - Add `glowfic-dl` to your project (Node 18+): `npm i glowfic-dl`
+- **Twitter/X** — Local archive exports (ZIP extracted)
+- **Bluesky** — AT Protocol CAR file exports with optional API enrichment
+- **Glowfic** — Collaborative fiction threads, sections, or boards via URL
+
+Next: ChatGPT, Reddit, Hugging Face datasets.
 
 This library started life as a Python script. This is a TypeScript rewrite where development will continue. It has powered projects like [deeperfates.com](https://deeperfates.com), [keltham.lol](https://keltham.lol), and [youaretheassistantnow.com](https://youaretheassistantnow.com).
 
@@ -170,22 +153,47 @@ Dry run with debug logs (no files written):
 
     npx tsx splice.ts --source ~/Downloads/my-twitter-archive --out ./out --dry-run --log-level debug
 
-## Input assumptions
+Bluesky CAR export:
 
-Supports the standard Twitter/X archive ZIP extracted to a directory that contains:
+    npx tsx splice.ts --source ~/Downloads/my-bsky-repo.car --out ./out
+
+Bluesky with thread context enrichment (fetches parent posts from API):
+
+    npx tsx splice.ts --source ~/Downloads/my-bsky-repo.car --out ./out --enrich
+
+Glowfic thread (single character as assistant):
+
+    npx tsx splice.ts --glowfic https://glowfic.com/posts/5506 --out ./out --assistant "Carissa"
+
+Glowfic board (all characters, HuggingFace dataset format):
+
+    npx tsx splice.ts --glowfic-board https://glowfic.com/boards/215 --out ./out --all-characters --min-posts 20
+
+## Sources
+
+### Twitter/X
+
+Extract the archive ZIP to a directory containing:
 
 - `data/manifest.js`
 - `data/tweets_media/` (optional, for media assets)
-- YTD `.js` files for `tweets` and `like` data (e.g., `data/tweets.js`, `data/like.js`, split across parts)
+- YTD `.js` files for `tweets` and `like` data
 
-We currently ingest:
-- Tweets (YTD `tweets`) and Likes (YTD `like`)
-- Media files prefixed with `<tweetId>-*` in `data/tweets_media/`
+We ingest tweets, likes, and media files prefixed with `<tweetId>-*`.
 
-Bluesky/AT Protocol:
-- Pass `--source path/to/repo-export.car`. We load `app.bsky.feed.post` records from the CAR.
-- Media blobs are referenced (with blob CID + alt text) but not downloaded yet; they’ll show up when we add a blob fetch step.
+### Bluesky
 
+Export your repository from Settings → Advanced → Export Content. Pass `--source path/to/repo.car`.
+
+- Use `--enrich` to fetch parent posts from the public API for full conversation context
+- Media blobs are referenced but not downloaded yet
+
+### Glowfic
+
+Pass a thread, section, or board URL: `--glowfic https://glowfic.com/posts/5506`
+
+- Requires `--assistant <name>` to specify which character is the assistant
+- For multi-character datasets: `--glowfic-board <url> --all-characters`
 ## Output layout
 
 On a successful run, you’ll see:
