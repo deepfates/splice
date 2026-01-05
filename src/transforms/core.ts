@@ -148,7 +148,20 @@ export function groupThreadsAndConversations(
     }
   }
 
-  return { threads, conversations };
+  // Deduplicate conversations: keep only the longest chain per root message
+  // This eliminates overlapping fragments like [A, B] when [A, B, C, D] exists
+  const rootToLongest = new Map<string, ContentItem[]>();
+  for (const conv of conversations) {
+    if (conv.length === 0) continue;
+    const rootId = conv[0].id;
+    const existing = rootToLongest.get(rootId);
+    if (!existing || conv.length > existing.length) {
+      rootToLongest.set(rootId, conv);
+    }
+  }
+  const deduplicatedConversations = Array.from(rootToLongest.values());
+
+  return { threads, conversations: deduplicatedConversations };
 }
 
 /**
