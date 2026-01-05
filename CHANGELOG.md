@@ -1,5 +1,33 @@
 # Changelog
 
+All notable changes to this project will be documented in this file.
+
+This project follows Conventional Commits and semantic versioning.
+Dates are in YYYY-MM-DD.
+
+## [0.2.0] - 2026-01-04
+
+### Added
+- **Bluesky CAR file import**: Parse AT Protocol repository exports via `@atproto/repo`
+  - Fetch full thread context with `--enrich` flag (parent posts from public API)
+  - Multi-turn conversations: 8,939 with 4+ messages for test dataset
+  - Strip Bluesky domain-style handles (`@user.bsky.social`)
+- **Conversation deduplication**: Keep only the longest chain per root message by default
+  - Eliminates redundant overlapping fragments
+  - Example: 17K conversations → 6,216 unique conversations
+- Date-baked paths for markdown export (`out/threads/YYYYMMDD/slug.md`)
+
+### Fixed
+- Walk full parent chains for longer conversations
+  - Previously capped at ~4 messages due to early break on processed posts
+  - Now captures conversations up to 23+ messages
+  - 1,546 conversations with 5+ messages; 375 with 15+ messages
+
+### Changed
+- JSON now included in default output formats
+
+[0.2.0]: https://github.com/deepfates/splice/compare/v0.1.2...v0.2.0
+
 ## Unreleased
 
 ### Fixed
@@ -14,9 +42,6 @@
 - **Major optimization**: Media file indexing is now O(n) instead of O(n²). Previously, for each tweet we would read the entire media directory to find matching files. Now we build a single media map upfront, reducing processing time from minutes to seconds for large archives.
   - Processing 767k tweets with 12k media files now takes ~39 seconds (down from potentially hours)
   - Replaced per-tweet `getMediaFiles()` calls with a single `buildMediaMap()` call at ingestion start
-
-
-All notable changes to this project will be documented in this file.
 
 This project follows Conventional Commits and semantic versioning.
 Dates are in YYYY-MM-DD.

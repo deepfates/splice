@@ -1,6 +1,6 @@
 {
   "name": "@deepfates/splice",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "splice — convert social/chat exports into normalized threads and export to Markdown and OAI JSONL",
   "license": "MIT",
   "author": "",
