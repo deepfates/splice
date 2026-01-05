@@ -18,7 +18,7 @@ Turn your archives into:
 - OAI-compatible JSONL for training/eval
 - A normalized JSONL dump for inspection and reuse
 
-Today it imports Twitter/X and Glowfic. The plan is to splice in other archives (Bluesky, ChatGPT, Reddit, Hugging Face, …) and let you pick the strands you want to weave into a training set.
+Today it imports Twitter/X, Bluesky, and Glowfic. The plan is to splice in other archives (ChatGPT, Reddit, Hugging Face, …) and let you pick the strands you want to weave into a training set.
 
 Glowfic input (threads, sections, boards)
 - You can now target Glowfic threads, board sections, or entire boards by URL (examples: https://glowfic.com/posts/5506, https://glowfic.com/board_sections/703, https://glowfic.com/boards/215).
@@ -80,12 +80,15 @@ Help (equivalent to `--help`):
     Usage:
       splice --source <path> --out <dir> [--format markdown oai json sharegpt] [--system-message <text>]
              [--since <iso>] [--until <iso>] [--min-length <n>] [--exclude-rt] [--only-threads] [--with-media]
-             [--dry-run] [--stats-json] [--log-level <level>] [--json-stdout] [--quiet|-q] [--verbose] [--version|-V]
+             [--enrich] [--dry-run] [--stats-json] [--log-level <level>] [--json-stdout] [--quiet|-q] [--verbose] [--version|-V]
+
+      splice --glowfic <url> --out <dir> --assistant <name> [--assistant-regex <pattern>]
+      splice --glowfic-board <url> --out <dir> --all-characters [--min-posts <n>]
 
     Options:
-      --source <path>            Path to the Twitter archive directory
+      --source <path>            Path to Twitter archive directory or Bluesky .car file
       --out <dir>                Output directory
-      --format <fmt...>          One or more formats: markdown, oai, json, sharegpt (default: markdown oai)
+      --format <fmt...>          One or more formats: markdown, oai, json, sharegpt (default: markdown oai json)
       --system-message <text>    System message for OAI JSONL (default: "You have been uploaded to the internet")
                                  Alias: --system
       --since <iso>              Include items on/after this ISO date
@@ -94,7 +97,8 @@ Help (equivalent to `--help`):
       --exclude-rt               Exclude retweets (RT ...)
       --only-threads             Output threads only
       --with-media               Only include items that have media
-      --dry-run, -n              Plan only; don’t write files
+      --enrich                   Fetch thread context from API (Bluesky only)
+      --dry-run, -n              Plan only; don't write files
       --stats-json               Write a stats.json summary
       --log-level <level>        debug|info|warn|error (default: info)
       --json-stdout              Emit normalized items JSONL to stdout; logs to stderr
@@ -102,6 +106,14 @@ Help (equivalent to `--help`):
       --verbose                  Debug logging
       --version, -V              Show version
       --help, -h                 Show help
+
+    Glowfic Options:
+      --glowfic <url>            Glowfic thread/section/board URL to ingest
+      --assistant <name>         Character name for assistant role (case-insensitive)
+      --assistant-regex <pat>    Regex pattern for assistant matching
+      --glowfic-board <url>      Board URL for multi-character export
+      --all-characters           Export datasets for all characters on board
+      --min-posts <n>            Minimum posts for character inclusion (default: 10)
 
     Environment:
       SPLICE_SYSTEM_MESSAGE      Alternative way to set the OAI system message
@@ -259,9 +271,10 @@ Watch tests:
 
 ## Roadmap (short)
 
-- More inputs: Bluesky, Reddit, ChatGPT, HF datasets (Glowfic done)
+- More inputs: Reddit, ChatGPT, HF datasets
 - Checkpointing and resumable pipelines (JSONL-based manifests)
-- More outputs: ShareGPT enhancements, SQLite/Parquet/CSV
+- More outputs: SQLite/Parquet/CSV
+- Blob fetching for Bluesky media
 - Better selection: persona/character filters, time ranges
 - Improved role attribution and metadata preservation
 
