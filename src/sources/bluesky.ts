@@ -163,3 +163,116 @@ function makeBlobAttachment(
   };
 }
 
+const BSKY_PUBLIC_API = "https://public.api.bsky.app";
+
+/**
+ * Fetch a single post from the public Bluesky API.
+ * Returns null if the post is deleted/blocked/not found.
+ */
+async function fetchPost(
+  uri: string,
+  logger: (l: Level, m: string) => void,
+): Promise<ContentItem | null> {
+  const url = `${BSKY_PUBLIC_API}/xrpc/app.bsky.feed.getPostThread?uri=${encodeURIComponent(uri)}&depth=0&parentHeight=0`;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      if (res.status === 404 || res.status === 400) {
+        logger("debug", `Post not found: ${uri}`);
+        return null;
+      }
+      throw new Error(`API error ${res.status}`);
+    }
+    const data = await res.json() as { thread?: { $type?: string; post?: any } };
+    const thread = data.thread;
+    if (!thread || thread.$type !== "app.bsky.feed.defs#threadViewPost") {
+      return null;
+    }
+    const post = thread.post;
+    const record = post.record as { text?: string; createdAt?: string };
+    const author = post.author as { did: string; handle: string; displayName?: string };
+    
+    return {
+      id: post.uri,
+      text: record.text ?? "",
+      createdAt: record.createdAt ? toIso(record.createdAt) : new Date().toISOString(),
+      parentId: null, // We don't recurse further
+      inReplyToUserId: null,
+      accountId: author.did,
+      source: "bluesky:fetched",
+      raw: {
+        uri: post.uri,
+        cid: post.cid,
+        author: {
+          did: author.did,
+          handle: author.handle,
+          displayName: author.displayName,
+        },
+        record,
+      },
+      media: [],
+    };
+  } catch (e) {
+    logger("warn", `Failed to fetch ${uri}: ${(e as Error).message}`);
+    return null;
+  }
+}
+
+/**
+ * Enrich a list of Bluesky posts by fetching their parent posts from the public API.
+ * Returns the original items plus any successfully fetched parent posts.
+ */
+export async function enrichBlueskyPosts(
+  items: ContentItem[],
+  logger: (l: Level, m: string) => void,
+): Promise<ContentItem[]> {
+  // Collect unique parent URIs that we don't already have
+  const existingIds = new Set(items.map(i => i.id));
+  const parentUris = new Set<string>();
+  
+  for (const item of items) {
+    if (item.parentId && !existingIds.has(item.parentId)) {
+      parentUris.add(item.parentId);
+    }
+  }
+  
+  if (parentUris.size === 0) {
+    logger("info", "No parent posts to fetch");
+    return items;
+  }
+  
+  logger("info", `Fetching ${parentUris.size} parent posts from Bluesky API...`);
+  
+  const fetched: ContentItem[] = [];
+  const uriList = Array.from(parentUris);
+  let completed = 0;
+  
+  // Batch with rate limiting - 10 concurrent, 100ms delay between batches
+  const BATCH_SIZE = 10;
+  const DELAY_MS = 100;
+  
+  for (let i = 0; i < uriList.length; i += BATCH_SIZE) {
+    const batch = uriList.slice(i, i + BATCH_SIZE);
+    const results = await Promise.all(
+      batch.map(uri => fetchPost(uri, logger))
+    );
+    
+    for (const result of results) {
+      if (result) fetched.push(result);
+    }
+    
+    completed += batch.length;
+    if (completed % 500 === 0 || completed === uriList.length) {
+      logger("info", `Fetched ${completed}/${uriList.length} parent posts (${fetched.length} successful)`);
+    }
+    
+    // Rate limit delay
+    if (i + BATCH_SIZE < uriList.length) {
+      await new Promise(r => setTimeout(r, DELAY_MS));
+    }
+  }
+  
+  logger("info", `Enrichment complete: fetched ${fetched.length} parent posts`);
+  
+  return [...items, ...fetched];
+}

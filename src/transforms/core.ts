@@ -59,6 +59,9 @@ export function applyFilters(
   const untilTime = opts.until ? new Date(opts.until).getTime() : Infinity;
 
   return items.filter((it) => {
+    // Always preserve fetched parent posts (needed for conversation context)
+    if (it.source === "bluesky:fetched") return true;
+    
     const t = new Date(it.createdAt).getTime();
     if (!(t >= sinceTime && t <= untilTime)) return false;
     if (opts.excludeRt && isRetweet(it.text)) return false;
@@ -99,6 +102,8 @@ export function groupThreadsAndConversations(
   const items = Object.values(all);
   for (const item of items) {
     if (processed.has(item.id)) continue;
+    // Don't start chains from fetched posts - they're context for other posts
+    if (item.source === "bluesky:fetched") continue;
 
     const chain: ContentItem[] = [item];
     let current = item;

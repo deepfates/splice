@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { CLIOptions, parseArgs, makeLogger, usage } from "../core/types";
 
 import { detectTwitterArchive, ingestTwitter } from "../sources/twitter";
-import { detectBlueskyCar, ingestBlueskyCar } from "../sources/bluesky";
+import { detectBlueskyCar, ingestBlueskyCar, enrichBlueskyPosts } from "../sources/bluesky";
 import {
   applyFilters,
   indexById,
@@ -119,6 +119,7 @@ async function main() {
       "--status",
       "--ids",
       "--ids-file",
+      "--enrich",
       "--",
     ]);
     const unknown = argv.filter(
@@ -200,7 +201,12 @@ async function main() {
 
   try {
     logger("info", `Ingesting ${selected.kind} data from ${source}`);
-    const items = await selected.ingest(source, logger);
+    let items = await selected.ingest(source, logger);
+
+    // Enrich Bluesky posts with parent context if requested
+    if (opts.enrich && selected.kind === "bluesky") {
+      items = await enrichBlueskyPosts(items, logger);
+    }
 
     const filtered = applyFilters(items, {
       since: opts.since,

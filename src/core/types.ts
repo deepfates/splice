@@ -84,6 +84,8 @@ export type CLIOptions = {
   idsFile?: string;
   // outputs
   statsJson: boolean;
+  // bluesky enrichment
+  enrich: boolean;
 };
 
 export const DEFAULT_SYSTEM_MESSAGE = "You have been uploaded to the internet";
@@ -111,6 +113,8 @@ export function parseArgs(argv: string[]): CLIOptions {
     statsJson: false,
     workspace: undefined,
     checkpoint: undefined,
+    // bluesky enrichment
+    enrich: false,
   };
 
   const args = argv.slice(2);
@@ -176,6 +180,8 @@ export function parseArgs(argv: string[]): CLIOptions {
       opts.withMedia = true;
     } else if (a === "--stats-json") {
       opts.statsJson = true;
+    } else if (a === "--enrich") {
+      opts.enrich = true;
     } else if (a === "--decisions-import" || a === "--decisions-file") {
       opts.decisionsImport = args[++i];
     } else if (a === "--set-status" || a === "--status") {
