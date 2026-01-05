@@ -6,6 +6,8 @@ import {
   isRetweet,
 } from "../core/types";
 
+const SELF_POST_SOURCES = new Set(["twitter:tweet", "bluesky:post"]);
+
 /**
  * Replace shortened URLs with expanded; strip t.co links, mentions, hashtags.
  * Preserve paragraph breaks; collapse intra-line spaces and trim.
@@ -22,9 +24,9 @@ export function cleanText(
   }
   // Normalize line endings
   t = t.replace(/\r\n?/g, "\n");
-  // Remove t.co links, mentions, and hashtags
+  // Remove t.co links, mentions (including Bluesky domain-style), and hashtags
   t = t.replace(/https:\/\/t\.co\/\w+/g, "");
-  t = t.replace(/@\w+/g, "");
+  t = t.replace(/@[\w.-]+/g, ""); // Matches @user, @user.bsky.social, @berduck.deepfates.com
   t = t.replace(/#\w+/g, "");
   // Collapse spaces/tabs within lines while preserving paragraph breaks
   t = t
@@ -57,6 +59,9 @@ export function applyFilters(
   const untilTime = opts.until ? new Date(opts.until).getTime() : Infinity;
 
   return items.filter((it) => {
+    // Always preserve fetched parent posts (needed for conversation context)
+    if (it.source === "bluesky:fetched") return true;
+    
     const t = new Date(it.createdAt).getTime();
     if (!(t >= sinceTime && t <= untilTime)) return false;
     if (opts.excludeRt && isRetweet(it.text)) return false;
@@ -97,6 +102,8 @@ export function groupThreadsAndConversations(
   const items = Object.values(all);
   for (const item of items) {
     if (processed.has(item.id)) continue;
+    // Don't start chains from fetched posts - they're context for other posts
+    if (item.source === "bluesky:fetched") continue;
 
     const chain: ContentItem[] = [item];
     let current = item;
@@ -108,7 +115,9 @@ export function groupThreadsAndConversations(
     }
     for (const c of chain) processed.add(c.id);
 
-    const allTweets = chain.every((c) => c.source === "twitter:tweet");
+    const allSelfPosts = chain.every((c) =>
+      SELF_POST_SOURCES.has(c.source),
+    );
 
     // Check if this is a self-thread (all tweets are self-replies)
     // A tweet is a self-reply if:
@@ -130,7 +139,7 @@ export function groupThreadsAndConversations(
       return true;
     });
 
-    if (allTweets && isSelfThread) {
+    if (allSelfPosts && isSelfThread) {
       const ordered = chain.slice().reverse(); // oldest → newest
       threads.push({ id: ordered[0].id, items: ordered });
     } else {
@@ -149,8 +158,13 @@ export function groupThreadsAndConversations(
  * - Trim trailing user messages to end on assistant if possible.
  */
 export function inferRole(it: ContentItem): Role {
-  // Heuristic: tweets that look like assistant outputs (e.g., have full_text) are "assistant"; others are "user"
-  return it.raw && "full_text" in (it.raw as any) ? "assistant" : "user";
+  // Twitter: has full_text in raw (from archive owner's tweets)
+  if (it.raw && "full_text" in (it.raw as any)) return "assistant";
+
+  // Bluesky: the archive only contains our posts, so all bluesky:post items are "assistant"
+  if (it.source === "bluesky:post") return "assistant";
+
+  return "user";
 }
 
 export function messagesFromConversation(items: ContentItem[]): ChatMessage[] {

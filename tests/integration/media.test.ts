@@ -89,17 +89,24 @@ describe("splice CLI media handling", () => {
       expect(copiedStat.size).toBeGreaterThan(0);
 
       // Find the generated thread markdown and assert the image link is present
-      const threadFiles = await fs.readdir(threadsDir);
+      const threadSubdirs = (
+        await fs.readdir(threadsDir, { withFileTypes: true })
+      )
+        .filter((d) => d.isDirectory())
+        .map((d) => d.name);
+      expect(threadSubdirs.length).toBeGreaterThan(0);
+      const threadYmdDir = path.join(threadsDir, threadSubdirs[0]);
+      const threadFiles = await fs.readdir(threadYmdDir);
       const mdFiles = threadFiles.filter((f) => f.endsWith(".md"));
       expect(mdFiles.length).toBeGreaterThan(0);
 
       // Read first thread file
-      const threadMdPath = path.join(threadsDir, mdFiles[0]);
+      const threadMdPath = path.join(threadYmdDir, mdFiles[0]);
       const threadContent = await fs.readFile(threadMdPath, "utf8");
 
-      // Threads are saved under out/threads, so images are linked as ../images/_<basename>
+      // Threads are saved under out/threads/<date>, so images are linked as ../../images/_<basename>
       const expectedMdImage =
-        `![${sourceMediaBasename}](../images/${copiedMediaBasename})`;
+        `![${sourceMediaBasename}](../../images/${copiedMediaBasename})`;
 
       expect(threadContent).toContain(expectedMdImage);
     },

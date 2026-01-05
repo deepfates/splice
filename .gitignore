@@ -52,3 +52,5 @@ temp/
 
 # Test outputs
 out/
+outberduck/
+.splice/

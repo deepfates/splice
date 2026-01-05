@@ -4,7 +4,7 @@ Convert social/chat archives into normalized threads and export to Markdown, OAI
 
 - Idiomatic CLI (clig.dev principles)
 - Modular architecture:
-  - sources: Twitter/X today; Bluesky, ChatGPT, etc. next
+  - sources: Twitter/X archives and Bluesky repo CAR exports (text-first; blobs soon), ChatGPT, etc. next
   - transforms: filtering, grouping into threads/conversations, text cleaning
   - outputs: Markdown, OAI JSONL, JSONL (normalized items), ShareGPT
 - Library API to compose your own pipeline or plug in proprietary adapters
@@ -146,6 +146,10 @@ Supports the standard Twitter/X archive ZIP extracted to a directory that contai
 We currently ingest:
 - Tweets (YTD `tweets`) and Likes (YTD `like`)
 - Media files prefixed with `<tweetId>-*` in `data/tweets_media/`
+
+Bluesky/AT Protocol:
+- Pass `--source path/to/repo-export.car`. We load `app.bsky.feed.post` records from the CAR.
+- Media blobs are referenced (with blob CID + alt text) but not downloaded yet; they’ll show up when we add a blob fetch step.
 
 ## Output layout
 

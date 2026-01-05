@@ -54,6 +54,8 @@
     "node": ">=18"
   },
   "dependencies": {
+    "@atproto/api": "^0.18.0",
+    "@atproto/repo": "^0.8.10",
     "cosmiconfig": "^9.0.0"
   },
   "devDependencies": {
