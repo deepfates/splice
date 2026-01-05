@@ -111,7 +111,8 @@ export function groupThreadsAndConversations(
       const parent = all[current.parentId];
       chain.push(parent);
       current = parent;
-      if (processed.has(current.id)) break;
+      // Don't break on processed - we want the full chain for context
+      // (we just won't create a duplicate chain starting from this post)
     }
     for (const c of chain) processed.add(c.id);
 
