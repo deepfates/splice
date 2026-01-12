@@ -98,6 +98,15 @@ export type CLIOptions = {
   glowficBoard?: string; // single board URL for multi-character export
   allCharacters: boolean; // export for all characters
   minPosts: number; // minimum posts for character inclusion
+  // media analysis
+  analyzeMedia: boolean;
+  vlmProvider: "gemini" | "ollama" | "openai" | "lmstudio";
+  vlmModel?: string;
+  vlmConcurrency: number;
+  embedMedia: boolean;
+  skipVideo: boolean;
+  injectDescriptions: boolean;
+  maxImageSize: number;
 };
 
 export const DEFAULT_SYSTEM_MESSAGE = "You have been uploaded to the internet";
@@ -135,6 +144,15 @@ export function parseArgs(argv: string[]): CLIOptions {
     glowficBoard: undefined,
     allCharacters: false,
     minPosts: 10,
+    // media analysis defaults
+    analyzeMedia: false,
+    vlmProvider: "gemini",
+    vlmModel: undefined,
+    vlmConcurrency: 10,
+    embedMedia: false,
+    skipVideo: false,
+    injectDescriptions: false,
+    maxImageSize: 1024,
   };
 
   const args = argv.slice(2);
@@ -249,6 +267,29 @@ export function parseArgs(argv: string[]): CLIOptions {
     } else if (a === "--min-posts") {
       const v = parseInt(args[++i] ?? "", 10);
       if (!Number.isNaN(v)) opts.minPosts = v;
+    } else if (a === "--analyze-media") {
+      opts.analyzeMedia = true;
+      // Sensible default: inject descriptions when analyzing media
+      opts.injectDescriptions = true;
+    } else if (a === "--vlm") {
+      const val = args[++i]?.toLowerCase();
+      if (val === "gemini" || val === "ollama" || val === "openai" || val === "lmstudio") {
+        opts.vlmProvider = val;
+      }
+    } else if (a === "--vlm-model") {
+      opts.vlmModel = args[++i];
+    } else if (a === "--vlm-concurrency") {
+      const v = parseInt(args[++i] ?? "", 10);
+      if (!Number.isNaN(v) && v > 0) opts.vlmConcurrency = v;
+    } else if (a === "--embed-media") {
+      opts.embedMedia = true;
+    } else if (a === "--skip-video") {
+      opts.skipVideo = true;
+    } else if (a === "--inject-descriptions") {
+      opts.injectDescriptions = true;
+    } else if (a === "--max-image-size") {
+      const v = parseInt(args[++i] ?? "", 10);
+      if (!Number.isNaN(v) && v >= 0) opts.maxImageSize = v;
     } else if (a === "--") {
       break;
     } else if (a.startsWith("-")) {
@@ -297,6 +338,16 @@ export function usage(): string {
     "  --glowfic-board <url>      Single board URL for multi-character export",
     "  --all-characters           Export datasets for all characters (with --glowfic-board)",
     "  --min-posts <n>            Minimum posts for character inclusion (default: 10)",
+    "",
+    "Media Analysis Options:",
+    "  --analyze-media            Analyze images/videos with VLM (captions, OCR, descriptions)",
+    "  --vlm <provider>           VLM provider: gemini (default), ollama, lmstudio, openai",
+    "  --vlm-model <model>        Model override (e.g., gemini-2.0-flash, llava:13b)",
+    "  --vlm-concurrency <n>      Parallel analysis jobs (default: 10 for API, 1 for local)",
+    "  --embed-media              Generate CLIP embeddings (not yet implemented)",
+    "  --skip-video               Skip video analysis (images only)",
+    "  --inject-descriptions      Inject image descriptions into text content",
+    "  --max-image-size <px>      Max image dimension for preprocessing (default: 1024, 0=disable)",
     "",
     "Examples:",
     "  splice --source ./archive --out ./out --format markdown oai json",

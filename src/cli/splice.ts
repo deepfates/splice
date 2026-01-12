@@ -27,6 +27,7 @@ import {
   writeShareGPT,
   writeStatsJSON,
 } from "../outputs/writers";
+import { analyzeMedia, injectMediaDescriptions } from "../transforms/media-analysis";
 import {
   FsStore,
   createCheckpointManifest,
@@ -130,6 +131,14 @@ async function main() {
       "--assistant",
       "--assistant-regex",
       "--assistant-re",
+      "--analyze-media",
+      "--vlm",
+      "--vlm-model",
+      "--vlm-concurrency",
+      "--embed-media",
+      "--skip-video",
+      "--inject-descriptions",
+      "--max-image-size",
       "--",
     ]);
     const unknown = argv.filter(
@@ -350,6 +359,30 @@ async function main() {
     // Enrich Bluesky posts with parent context if requested
     if (opts.enrich && selected.kind === "bluesky") {
       items = await enrichBlueskyPosts(items, logger);
+    }
+
+    // Analyze media with VLM if requested
+    if (opts.analyzeMedia) {
+      items = await analyzeMedia(
+        items,
+        {
+          provider: opts.vlmProvider,
+          model: opts.vlmModel,
+          concurrency: opts.vlmConcurrency,
+          embedMedia: opts.embedMedia,
+          skipVideo: opts.skipVideo,
+          videoFrameInterval: 5,
+          maxImageSize: opts.maxImageSize,
+        },
+        outDir,
+        logger,
+      );
+
+      // Optionally inject descriptions into text content
+      if (opts.injectDescriptions) {
+        items = injectMediaDescriptions(items);
+        logger("info", "Injected media descriptions into text content");
+      }
     }
 
     const filtered = applyFilters(items, {
