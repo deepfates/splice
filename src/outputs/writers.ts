@@ -64,7 +64,12 @@ function mediaMarkdownLinks(media?: MediaAttachment[]): string[] {
     .filter((m) => !!m.absPath)
     .map((m) => {
       const base = path.basename(m.absPath as string);
-      return `![${base}](../../images/_${base})`;
+      // Use VLM caption as alt text if available, otherwise filename
+      const analysis = m.metadata?.analysis as { caption?: string; ocrText?: string } | undefined;
+      let altText = analysis?.caption || base;
+      // Escape any markdown special characters in alt text
+      altText = altText.replace(/\[/g, "\\[").replace(/\]/g, "\\]");
+      return `![${altText}](../../images/_${base})`;
     });
 }
 
