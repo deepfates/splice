@@ -51,5 +51,6 @@ tmp/
 temp/
 
 # Test outputs
-out*/
+memes/
+out/
 .splice/
