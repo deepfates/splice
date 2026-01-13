@@ -269,8 +269,8 @@ export function parseArgs(argv: string[]): CLIOptions {
       if (!Number.isNaN(v)) opts.minPosts = v;
     } else if (a === "--analyze-media") {
       opts.analyzeMedia = true;
-      // Sensible default: inject descriptions when analyzing media
-      opts.injectDescriptions = true;
+      // Note: don't auto-enable injectDescriptions - markdown has alt text,
+      // use --inject-descriptions explicitly for training-data-only runs
     } else if (a === "--vlm") {
       const val = args[++i]?.toLowerCase();
       if (val === "gemini" || val === "ollama" || val === "openai" || val === "lmstudio") {
