@@ -8,7 +8,7 @@ import {
   Level,
   MediaAttachment,
   toIso,
-} from "../core/types";
+} from "../core/types.js";
 
 const POST_COLLECTION = "app.bsky.feed.post";
 

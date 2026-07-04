@@ -9,7 +9,7 @@ import {
   mediaTypeFromExt,
   toIso,
   cleanJsonString,
-} from "../core/types";
+} from "../core/types.js";
 
 /**
  * Subset of the Twitter/X archive manifest schema

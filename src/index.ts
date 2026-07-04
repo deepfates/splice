@@ -14,15 +14,15 @@
  */
 
 // Re-export shared types, args, logger, and utilities
-export * from "./core/types";
+export * from "./core/types.js";
 
 // Re-export built-in Sources
-export * from "./sources/twitter";
-export * from "./sources/bluesky";
-export * from "./sources/glowfic";
+export * from "./sources/twitter.js";
+export * from "./sources/bluesky.js";
+export * from "./sources/glowfic.js";
 
 // Re-export built-in Transforms
-export * from "./transforms/core";
+export * from "./transforms/core.js";
 
 // Re-export built-in Outputs
 export {
@@ -31,11 +31,11 @@ export {
   writeNormalizedJSONL,
   writeShareGPT,
   writeStatsJSON,
-} from "./outputs/writers";
+} from "./outputs/writers.js";
 
 /* ------------------------------- Extensions ------------------------------- */
 
-import type { Level, ContentItem, Thread } from "./core/types";
+import type { Level, ContentItem, Thread } from "./core/types.js";
 
 /**
  * Logger signature used across the pipeline

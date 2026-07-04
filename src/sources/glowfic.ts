@@ -17,8 +17,8 @@ import type {
   Thread as NormalizedThread,
   ChatMessage,
   Role,
-} from "../core/types";
-import { toIso } from "../core/types";
+} from "../core/types.js";
+import { toIso } from "../core/types.js";
 
 import {
   fetchStructure,
@@ -544,7 +544,7 @@ export function segmentBoardByAllCharacters(
 
 /* ------------------------------- SourceAdapter ---------------------------- */
 
-import type { SourceAdapter, Logger } from "../index";
+import type { SourceAdapter, Logger } from "../index.js";
 
 /**
  * A pluggable SourceAdapter for Glowfic URLs.

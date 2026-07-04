@@ -9,8 +9,8 @@ import {
   formatIsoDateOnly,
   sanitizeFilename,
   isRetweet,
-} from "../core/types";
-import { cleanText, messagesFromConversation } from "../transforms/core";
+} from "../core/types.js";
+import { cleanText, messagesFromConversation } from "../transforms/core.js";
 
 /**
  * Ensure a directory exists (mkdir -p).

@@ -4,7 +4,7 @@ import {
   ChatMessage,
   Role,
   isRetweet,
-} from "../core/types";
+} from "../core/types.js";
 
 const SELF_POST_SOURCES = new Set(["twitter:tweet", "bluesky:post"]);
 

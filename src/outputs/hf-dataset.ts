@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { Level, ChatMessage } from "../core/types";
-import type { GlowficCharacter, MultiCharacterResult } from "../sources/glowfic";
+import type { Level, ChatMessage } from "../core/types.js";
+import type { GlowficCharacter, MultiCharacterResult } from "../sources/glowfic.js";
 
 /**
  * Ensure a directory exists (mkdir -p).

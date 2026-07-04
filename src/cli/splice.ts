@@ -10,31 +10,31 @@ import * as path from "node:path";
 import * as fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
-import { CLIOptions, parseArgs, makeLogger, usage } from "../core/types";
+import { CLIOptions, parseArgs, makeLogger, usage } from "../core/types.js";
 
-import { detectTwitterArchive, ingestTwitter } from "../sources/twitter";
-import { detectBlueskyCar, ingestBlueskyCar, enrichBlueskyPosts } from "../sources/bluesky";
+import { detectTwitterArchive, ingestTwitter } from "../sources/twitter.js";
+import { detectBlueskyCar, ingestBlueskyCar, enrichBlueskyPosts } from "../sources/bluesky.js";
 // Glowfic support is loaded dynamically when needed to avoid ESM/undici issues on Node 18
 import {
   applyFilters,
   indexById,
   groupThreadsAndConversations,
-} from "../transforms/core";
+} from "../transforms/core.js";
 import {
   writeMarkdown,
   writeOAI,
   writeNormalizedJSONL,
   writeShareGPT,
   writeStatsJSON,
-} from "../outputs/writers";
+} from "../outputs/writers.js";
 import {
   FsStore,
   createCheckpointManifest,
   storeItemsJSONL,
   storeThreadsJSON,
   storeConversationsJSON,
-} from "../core/store";
-import { decisionsFromIds } from "../core/decisions";
+} from "../core/store.js";
+import { decisionsFromIds } from "../core/decisions.js";
 
 /* -------------------------------- version -------------------------------- */
 
@@ -189,8 +189,8 @@ async function main() {
         fetchGlowficThreads,
         segmentBoardByAllCharacters,
         extractUniqueCharacters,
-      } = await import("../sources/glowfic");
-      const { writeHuggingFaceDataset } = await import("../outputs/hf-dataset");
+      } = await import("../sources/glowfic.js");
+      const { writeHuggingFaceDataset } = await import("../outputs/hf-dataset.js");
       
       // Fetch all threads from the board (single request)
       const threads = await fetchGlowficThreads(opts.glowficBoard, logger, {
@@ -265,7 +265,7 @@ async function main() {
     try {
       // Lazy-load Glowfic support to avoid undici import on Node 18 when not used
       const { conversationsFromGlowficUrls } = await import(
-        "../sources/glowfic"
+        "../sources/glowfic.js"
       );
       const convs = await conversationsFromGlowficUrls(
         opts.glowfic,

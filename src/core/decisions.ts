@@ -1,4 +1,4 @@
-import type { ContentItem } from "./types";
+import type { ContentItem } from "./types.js";
 
 /**
  * Decisions — status/tags attached to IDs, typically ContentItem IDs.

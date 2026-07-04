@@ -2,7 +2,7 @@ import * as fsp from "node:fs/promises";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createHash } from "node:crypto";
-import type { ContentItem, Thread, Level } from "./types";
+import type { ContentItem, Thread, Level } from "./types.js";
 
 /**
  * Minimal JSONL-based filesystem store for checkpoints and artifacts.
