@@ -126,9 +126,44 @@ def loom_events(path: Path, data: dict[str, Any], marked: str) -> tuple[list[dic
             id_map[turn["id"]] = uuid7()
 
     events: list[dict[str, Any]] = []
-    stats = {"events": 0, "kinds": Counter(), "turns": len(id_map), "dangling_parents": 0}
+    stats = {
+        "events": 0,
+        "kinds": Counter(),
+        "turns": len(id_map),
+        "turns_total": len(turns),
+        "turns_imported": len(id_map),
+        "turns_nonconforming_carried": 0,
+        "dangling_parents": 0,
+    }
     for index, turn_any in enumerate(turns, start=1):
-        if not isinstance(turn_any, dict) or not isinstance(turn_any.get("id"), str):
+        if not isinstance(turn_any, dict) or not isinstance(turn_any.get("id"), str) or not turn_any.get("id"):
+            reason = "turn is not an object" if not isinstance(turn_any, dict) else "turn id is not a non-empty string"
+            event = {
+                "v": 1,
+                "id": uuid7(),
+                "kind": "story-machine/nonconforming-turn",
+                "at": unix_ms_to_rfc3339(loom.get("createdAt"), marked),
+                "author": {
+                    "actor": "unknown",
+                    "operator": "deepfates",
+                    "via": via_for_loom(loom),
+                    "imported_by": IMPORTER,
+                    "source": source_ref(path, f"turns[{index}]"),
+                },
+                "parents": [],
+                "payload": {
+                    "loom": loom,
+                    "turn_index": index,
+                    "reason": reason,
+                    "original_json": json.dumps(turn_any, ensure_ascii=False, separators=(",", ":")),
+                    "original": turn_any,
+                },
+                "marked": marked,
+            }
+            events.append(event)
+            stats["events"] += 1
+            stats["turns_nonconforming_carried"] += 1
+            stats["kinds"][event["kind"]] += 1
             continue
         turn = turn_any
         source_id = turn["id"]
@@ -260,6 +295,7 @@ def optimizer_events(path: Path, data: dict[str, Any], marked: str) -> tuple[lis
 
     candidate_event_ids: dict[str, str] = {}
     candidate_scores: dict[str, dict[str, float]] = defaultdict(dict)
+    snapshot_scores: dict[str, dict[str, float]] = {}
     candidate_generations: dict[str, int] = {}
     candidate_order: list[str] = []
 
@@ -302,9 +338,9 @@ def optimizer_events(path: Path, data: dict[str, Any], marked: str) -> tuple[lis
             ensure_candidate(source_obj["id"], source_obj.get("generation"), source_obj.get("source"))
             scores = source_obj.get("scores")
             if isinstance(scores, dict):
-                candidate_scores[source_obj["id"]].update(
-                    {str(k): float(v) for k, v in scores.items() if isinstance(v, (int, float))}
-                )
+                snapshot_scores[source_obj["id"]] = {
+                    str(k): float(v) for k, v in scores.items() if isinstance(v, (int, float))
+                }
 
     trajectories = data.get("trajectories") if isinstance(data.get("trajectories"), list) else []
     for index, entry_any in enumerate(trajectories, start=1):
@@ -374,10 +410,8 @@ def optimizer_events(path: Path, data: dict[str, Any], marked: str) -> tuple[lis
         for entry in data.get("front", [])
         if isinstance(entry, dict) and isinstance(entry.get("id"), str)
     ] if isinstance(data.get("front"), list) else []
-    reconstructed = pareto_front(candidate_scores, candidate_order)
-    front_kind = "reconstructed" if source_front and reconstructed == source_front else "snapshot"
-    if not source_front and reconstructed:
-        front_kind = "reconstructed"
+    reconstructed = pareto_front(candidate_scores, candidate_order) if candidate_scores else []
+    front_kind = "reconstructed" if reconstructed else "snapshot"
     stats["front_reconstruction"] = front_kind
     front_ids = reconstructed if front_kind == "reconstructed" else source_front
     front_parents = [candidate_event_ids[cid] for cid in front_ids if cid in candidate_event_ids]
@@ -403,6 +437,7 @@ def optimizer_events(path: Path, data: dict[str, Any], marked: str) -> tuple[lis
             "front": front_ids,
             "source_front": source_front,
             "reconstructed_front": reconstructed,
+            "snapshot_scores": snapshot_scores,
             "best": best_id,
             "best_average": average(best.get("scores", {})) if isinstance(best.get("scores"), dict) else None,
             "original": {"front": data.get("front"), "best": data.get("best")},
