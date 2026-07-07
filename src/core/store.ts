@@ -260,7 +260,8 @@ export class FsStore implements Store {
 
   async saveCheckpoint(manifest: CheckpointManifest): Promise<string> {
     await this.init();
-    const id = manifest.id ?? this.generateCheckpointId(manifest);
+    const manifestId = manifest.id?.trim();
+    const id = manifestId || this.generateCheckpointId(manifest);
     const full: CheckpointManifest = {
       ...manifest,
       id,

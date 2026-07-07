@@ -275,7 +275,7 @@ export function usage(): string {
     "Options:",
     "  --source <path>            Path to the Twitter archive directory",
     "  --out <dir>                Output directory",
-    "  --format <fmt...>          One or more formats: markdown, oai, json, sharegpt (default: markdown oai)",
+    "  --format <fmt...>          One or more formats: markdown, oai, json, sharegpt (default: markdown oai json)",
     '  --system, --system-message <text>    System message for OAI JSONL (default: "You have been uploaded to the internet")',
     "  --since <iso>              Include items on/after this ISO date",
     "  --until <iso>              Include items on/before this ISO date",

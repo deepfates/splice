@@ -149,6 +149,64 @@ describe("splice CLI integration", () => {
     expect(typeof firstItem.source).toBe("string");
   }, 30_000);
 
+  it("default run writes documented outputs and a named checkpoint", async () => {
+    const tempOut = await fs.mkdtemp(
+      path.join(os.tmpdir(), "splice-default-out-"),
+    );
+
+    try {
+      const { exitCode, stderr } = await execa(
+        tsxBin,
+        [
+          cliEntry,
+          "--source",
+          fixtureArchive,
+          "--out",
+          tempOut,
+          "--log-level",
+          "info",
+        ],
+        { cwd: projectRoot },
+      );
+
+      expect(exitCode).toBe(0);
+      expect(stderr).not.toContain("Saved checkpoint  in");
+
+      expect(fssync.existsSync(path.join(tempOut, "threads"))).toBe(true);
+      expect(fssync.existsSync(path.join(tempOut, "tweets"))).toBe(true);
+      expect(fssync.existsSync(path.join(tempOut, "images"))).toBe(true);
+      expect(
+        fssync.existsSync(path.join(tempOut, "conversations_oai.jsonl")),
+      ).toBe(true);
+      expect(
+        fssync.existsSync(path.join(tempOut, "normalized_items.jsonl")),
+      ).toBe(true);
+      expect(fssync.existsSync(path.join(tempOut, "sharegpt.json"))).toBe(
+        false,
+      );
+      expect(fssync.existsSync(path.join(tempOut, "stats.json"))).toBe(false);
+
+      const checkpointDir = path.join(tempOut, ".splice", "checkpoints");
+      const checkpointFiles = await fs.readdir(checkpointDir);
+      expect(checkpointFiles).toHaveLength(1);
+      expect(checkpointFiles[0]).toMatch(/^\d{4}-\d{2}-\d{2}T.+-[a-f0-9]{8}\.json$/);
+      expect(checkpointFiles).not.toContain(".json");
+
+      const objectsDir = path.join(tempOut, ".splice", "objects");
+      const objectFiles = await fs.readdir(objectsDir);
+      expect(objectFiles.length).toBeGreaterThan(0);
+      expect(objectFiles.every((f) => /^[a-f0-9]{64}\.(json|jsonl)$/.test(f))).toBe(
+        true,
+      );
+    } finally {
+      if (tempOut.startsWith(os.tmpdir())) {
+        await fs
+          .rm(tempOut, { recursive: true, force: true })
+          .catch(() => {});
+      }
+    }
+  }, 30_000);
+
   it("excludes replies from others (non-self-replies) from threads", async () => {
     // Create a fixture with a thread that has a reply from another user
     const tempFixture = await fs.mkdtemp(
