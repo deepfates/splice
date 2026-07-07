@@ -1,0 +1,67 @@
+{
+  "loom": {
+    "id": "loom-fixture",
+    "createdAt": 1770000000000,
+    "meta": {
+      "profile": "org.lync.profile.textStory.v1",
+      "title": "fixture",
+      "generator": "optimizer",
+      "startedAt": 1770000000000
+    }
+  },
+  "turns": [
+    {
+      "id": "root",
+      "loomId": "loom-fixture",
+      "parentId": null,
+      "createdAt": 1770000000000,
+      "payload": {
+        "text": "seed"
+      },
+      "meta": {
+        "role": "seed",
+        "author": "human"
+      }
+    },
+    {
+      "id": "left",
+      "loomId": "loom-fixture",
+      "parentId": "root",
+      "createdAt": 1770000001000,
+      "payload": {
+        "text": "left"
+      },
+      "meta": {
+        "role": "prose",
+        "author": "model-a"
+      }
+    },
+    {
+      "id": "right",
+      "loomId": "loom-fixture",
+      "parentId": "root",
+      "createdAt": 1770000002000,
+      "payload": {
+        "text": "right"
+      },
+      "meta": {
+        "role": "prose",
+        "author": "model-a"
+      }
+    },
+    {
+      "id": "joined",
+      "loomId": "loom-fixture",
+      "parentId": "right",
+      "createdAt": 1770000003000,
+      "payload": {
+        "text": "left/right"
+      },
+      "meta": {
+        "role": "composition",
+        "author": "splice",
+        "references": ["left", "right"]
+      }
+    }
+  ]
+}
