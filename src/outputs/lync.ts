@@ -188,7 +188,7 @@ function normalizeAt(
 
 /* --------------------------------- Authors -------------------------------- */
 
-function buildAuthor(
+export function buildAuthor(
   actor: string,
   opts: LyncProducerOptions,
   locator: string,
