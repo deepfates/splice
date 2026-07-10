@@ -1,0 +1,76 @@
+{
+  "runId": "2026-05-01T02-52-31-995-69488",
+  "proposerModel": "fixture-proposer",
+  "maxIterations": 2,
+  "archiveSize": 2,
+  "front": [
+    {
+      "id": "seed0001",
+      "generation": 0,
+      "source": "seed source",
+      "scores": {
+        "s1::w1": 0.9,
+        "s1::w2": 0.1
+      }
+    },
+    {
+      "id": "child001",
+      "generation": 1,
+      "source": "child source",
+      "scores": {
+        "s1::w1": 0.4,
+        "s1::w2": 0.8
+      }
+    }
+  ],
+  "best": {
+    "id": "child001",
+    "generation": 1,
+    "source": "child source",
+    "scores": {
+      "s1::w1": 0.4,
+      "s1::w2": 0.8
+    }
+  },
+  "trajectories": [
+    {
+      "candidateId": "seed0001",
+      "generation": 0,
+      "accepted": true,
+      "seedId": "s1",
+      "score": 0.5,
+      "diagnostics": "seed",
+      "elapsedMs": 10,
+      "perWitness": [
+        {"id": "w1", "value": 0.9, "diagnostic": "w1", "elapsedMs": 1},
+        {"id": "w2", "value": 0.1, "diagnostic": "w2", "elapsedMs": 1}
+      ]
+    },
+    {
+      "candidateId": "child001",
+      "generation": 1,
+      "accepted": true,
+      "seedId": "s1",
+      "score": 0.6,
+      "diagnostics": "child accepted",
+      "elapsedMs": 10,
+      "perWitness": [
+        {"id": "w1", "value": 0.4, "diagnostic": "w1", "elapsedMs": 1},
+        {"id": "w2", "value": 0.8, "diagnostic": "w2", "elapsedMs": 1}
+      ]
+    },
+    {
+      "candidateId": "reject01",
+      "generation": 2,
+      "accepted": false,
+      "seedId": "s1",
+      "score": 0.2,
+      "diagnostics": "child rejected",
+      "elapsedMs": 10,
+      "perWitness": [
+        {"id": "w1", "value": 0.2, "diagnostic": "w1", "elapsedMs": 1},
+        {"id": "w2", "value": 0.2, "diagnostic": "w2", "elapsedMs": 1}
+      ]
+    }
+  ]
+}

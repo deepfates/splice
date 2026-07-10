@@ -33,6 +33,9 @@ export {
   writeStatsJSON,
 } from "./outputs/writers.js";
 
+// lync producer (append-only JSONL event histories; see lync FORMAT.md)
+export * from "./outputs/lync.js";
+
 /* ------------------------------- Extensions ------------------------------- */
 
 import type { Level, ContentItem, Thread } from "./core/types.js";

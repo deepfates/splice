@@ -54,6 +54,11 @@ Dev/watch mode:
 
     npm run dev -- --source /path/to/twitter-archive --out ./out
 
+Try the checked-in fixture archive:
+
+    npm install
+    npm run start -- --source tests/integration/fixtures/archive --out ./out
+
 ## Usage
 
 Help (equivalent to `--help`):
@@ -181,6 +186,10 @@ Extract the archive ZIP to a directory containing:
 
 We ingest tweets, likes, and media files prefixed with `<tweetId>-*`.
 
+For a tiny copy-pasteable example, use the fixture at `tests/integration/fixtures/archive/`:
+
+    npm run start -- --source tests/integration/fixtures/archive --out ./out
+
 ### Bluesky
 
 Export your repository from Settings → Advanced → Export Content. Pass `--source path/to/repo.car`.
@@ -196,19 +205,44 @@ Pass a thread, section, or board URL: `--glowfic https://glowfic.com/posts/5506`
 - For multi-character datasets: `--glowfic-board <url> --all-characters`
 ## Output layout
 
-On a successful run, you’ll see:
+By default (`--format markdown oai json`), a successful run writes:
 
-- `out/threads/` — one Markdown file per detected thread, named like `YYYYMMDD-thread-<slug>.md`
-- `out/tweets/` — one Markdown file per non-thread tweet, named like `YYYYMMDD-tweet-<slug>.md`
+- `out/threads/YYYYMMDD/` — one Markdown file per detected multi-post thread, named like `<slug>.md`
+- `out/tweets/` — directory for one Markdown file per non-thread self-authored post, named like `<slug>.md`; in the fixture run this directory is empty and has no dated child directory
 - `out/images/` — copied media files referenced by the Markdown
 - `out/conversations_oai.jsonl` — OAI JSONL file with conversations built from threads and reply chains
 - `out/normalized_items.jsonl` — JSONL dump of normalized ContentItem records (one item per line)
-- `out/sharegpt.json` — ShareGPT export (array) for loaders that expect ShareGPT format
-- `out/stats.json` — summary (counts, threads/conversations, date range)
+- `out/.splice/objects/<sha256>.json|jsonl` — content-addressed intermediate artifacts used by checkpoint manifests
+- `out/.splice/checkpoints/<checkpoint-id>.json` — pipeline checkpoint manifest for the run
+
+The checked-in fixture command above creates this output tree:
+
+```text
+out
+out/normalized_items.jsonl
+out/images
+out/tweets
+out/threads
+out/threads/20250101
+out/threads/20250101/Top_tweet_with_link_httpstcoabc123.md
+out/.splice
+out/.splice/checkpoints
+out/.splice/checkpoints/<checkpoint-id>.json
+out/.splice/objects
+out/.splice/objects/<sha256>.json
+out/.splice/objects/<sha256>.jsonl
+out/conversations_oai.jsonl
+```
+
+Opt-in files:
+
+- `out/sharegpt.json` — ShareGPT export when you include `--format sharegpt`
+- `out/stats.json` — summary (counts, threads/conversations, date range) when you pass `--stats-json`
 
 Notes:
 - Thread filenames are derived from the top post’s first words (sanitized).
 - The OAI JSONL file includes a top-level “system” message (configurable).
+- The `.splice/` store is safe to delete if you only need the exported files; keep it if you want checkpoint provenance or future resumable workflows.
 
 ## Architecture (for contributors)
 
