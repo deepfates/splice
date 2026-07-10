@@ -36,6 +36,9 @@ export {
 // lync producer (append-only JSONL event histories; see lync FORMAT.md)
 export * from "./outputs/lync.js";
 
+// OCR text page sets → lync (dee-b8zk)
+export * from "./outputs/lync-ocr.js";
+
 /* ------------------------------- Extensions ------------------------------- */
 
 import type { Level, ContentItem, Thread } from "./core/types.js";
