@@ -1,7 +1,7 @@
 {
   "name": "@deepfates/splice",
   "version": "0.3.0",
-  "description": "splice — convert social/chat exports into normalized threads and export to Markdown and OAI JSONL",
+  "description": "splice \u2014 convert social/chat exports into normalized threads and export to Markdown and OAI JSONL",
   "license": "MIT",
   "author": "",
   "type": "module",
@@ -57,7 +57,8 @@
     "@atproto/api": "^0.18.0",
     "@atproto/repo": "^0.8.10",
     "cosmiconfig": "^9.0.0",
-    "glowfic-dl": "^0.2.1"
+    "glowfic-dl": "^0.2.1",
+    "lync-core": "file:vendor/lync-packages/lync-core-0.2.0.tgz"
   },
   "devDependencies": {
     "@types/node": "^22.7.4",
