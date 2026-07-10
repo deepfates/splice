@@ -35,6 +35,7 @@ export {
 
 // lync producer (append-only JSONL event histories; see lync FORMAT.md)
 export * from "./outputs/lync.js";
+export * from "./outputs/lync-tweet-embed.js";
 
 // OCR text page sets → lync (dee-b8zk)
 export * from "./outputs/lync-ocr.js";
