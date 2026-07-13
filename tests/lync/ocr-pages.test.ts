@@ -21,15 +21,22 @@ const projectRoot = path.resolve(__dirname, "../..");
 // The real signal-ocr archive (dee-b8zk acceptance source): 100 page pairs
 // (page-NNN.txt + page-NNN.desc.txt) plus signal-ocr-combined.md = 201 files.
 // Found via SPLICE_SIGNAL_OCR_DIR when set (worktrees), else the sibling
-// deep-space checkout; the real-archive suite is skipped when neither exists
-// (the synthetic suites below always run).
+// deep-space checkout; the real-archive suite is skipped LOUDLY when neither
+// exists (the synthetic suites below always run).
 const realDir =
   process.env.SPLICE_SIGNAL_OCR_DIR ??
   path.resolve(projectRoot, "../deep-space/data/signal-ocr");
 const hasRealDir = fssync.existsSync(realDir);
+if (!hasRealDir) {
+  console.warn(
+    `[ocr-pages.test] real-archive suite SKIPPED (4 tests): no archive at ${realDir} — set SPLICE_SIGNAL_OCR_DIR to the signal-ocr dir to run it`,
+  );
+}
 
 describe.skipIf(!hasRealDir)(
-  "signal-ocr real archive → lync (100 pages + combined doc)",
+  hasRealDir
+    ? "signal-ocr real archive → lync (100 pages + combined doc)"
+    : "signal-ocr real archive → lync — SKIPPED: set SPLICE_SIGNAL_OCR_DIR to enable",
   () => {
     it("scan: every one of the 201 files is classified, zero skipped, zero gaps", async () => {
       const scan = await scanOcrPageDir(realDir);
