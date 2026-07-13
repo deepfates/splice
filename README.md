@@ -72,6 +72,7 @@ Help (equivalent to `--help`):
 
       splice --glowfic <url> --out <dir> --assistant <name> [--assistant-regex <pattern>]
       splice --glowfic-board <url> --out <dir> --all-characters [--min-posts <n>]
+      splice lync <command> --source <path> --out <file.lync>   (see "lync output" below)
 
     Options:
       --source <path>            Path to Twitter archive directory or Bluesky .car file
@@ -173,6 +174,53 @@ Glowfic thread (single character as assistant):
 Glowfic board (all characters, HuggingFace dataset format):
 
     npx tsx splice.ts --glowfic-board https://glowfic.com/boards/215 --out ./out --all-characters --min-posts 20
+
+## lync output (CLI)
+
+`splice lync <command>` converts archives into append-only `.lync` event files
+(the lync FORMAT.md envelope). Every command writes the file, re-verifies it
+with lync-core (every line must classify `accepted`), and prints the full
+stats block — emitted/skipped counts with per-record reasons, timestamp
+fallbacks, verify counts — as JSON to stdout. Logs stay on stderr. Nothing is
+dropped silently.
+
+Commands:
+
+    splice lync archive     --source <twitter-dir|bsky.car>  --out <file.lync>
+    splice lync glowfic     --source <thread.json>           --out <file.lync>
+    splice lync ocr         --source <page-set-dir>          --out <file.lync>
+    splice lync tweet-embed --source <embed-cache-dir>       --out <file.lync>
+
+- `archive` — a Twitter archive directory or Bluesky `.car` file (same
+  detection as the main pipeline) → one event per normalized item
+  (`twitter/tweet`, `twitter/like`, …), reply links preserved as parents.
+- `glowfic` — a glowfic-dl JSON export (`thread.json`) → one `glowfic/thread`
+  event plus one `glowfic/post` per post, chained in post order.
+- `ocr` — a directory of OCR pages (`page-NNN.txt`, optional
+  `page-NNN.desc.txt` sidecars, combined `*.md`) → `ocr/set`, `ocr/page`,
+  `ocr/document` events. `--set-locator <name>` pins the id-stable set
+  identity (default: directory basename).
+- `tweet-embed` — a directory of cached oEmbed responses
+  (`<tweetid>-light.json`) → `twitter/tweet-embed` events. Pass
+  `--archive-ids-file <path>` (JSON array or one id per line) to parent
+  matched embeds to their canonical archive tweet events.
+
+Common options: `--operator`, `--via`, `--source-ref` (author envelope
+overrides), `--marked-at <rfc3339>` (record import time; opt-in because
+omitting it keeps re-runs byte-identical so lync unions them as duplicates),
+`--dry-run`, `--quiet`, `--verbose`, `--log-level`. Unknown flags are hard
+errors (exit 2), not warnings. See `splice lync --help`.
+
+Examples:
+
+    npx tsx splice.ts lync archive --source ~/Downloads/my-twitter-archive --out ./out/twitter.lync
+    npx tsx splice.ts lync glowfic --source tests/fixtures/glowfic-export/thread.json --out ./out/thread-5506.lync
+    npx tsx splice.ts lync ocr --source ../deep-space/data/signal-ocr --out ./out/signal-ocr.lync
+    npx tsx splice.ts lync tweet-embed --source ../deep-space/.embed-cache/tweets --out ./out/embeds.lync
+
+Exit codes match the main CLI: 0 success, 1 runtime/verify error, 2 usage
+error. Future exporters (lync → training data, lync → markdown, session
+imports) will land as sibling subcommands here.
 
 ## Sources
 

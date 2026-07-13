@@ -271,6 +271,9 @@ export function usage(): string {
     "  splice --source <path> --out <dir> [--format markdown oai json sharegpt] [--system-message <text>]",
     "         [--since <iso>] [--until <iso>] [--min-length <n>] [--exclude-rt] [--only-threads] [--with-media]",
     "         [--dry-run] [--stats-json] [--log-level <level>] [--json-stdout] [--quiet|-q] [--verbose] [--version|-V] [--decisions-import <path>] [--set-status <status> --ids <...>|--ids-file <path>]",
+    "  splice lync <command> --source <path> --out <file.lync>",
+    "         Convert archives to lync event files (archive, glowfic, ocr, tweet-embed);",
+    "         see `splice lync --help` for commands and options",
     "",
     "Options:",
     "  --source <path>            Path to the Twitter archive directory",
@@ -307,6 +310,7 @@ export function usage(): string {
     "  splice --glowfic https://glowfic.com/posts/5506 --out ./out --format oai --assistant carissa",
     '  splice --glowfic https://glowfic.com/boards/215 --out ./out --format oai --assistant-regex "carissa"',
     "  splice --glowfic-board https://glowfic.com/boards/215 --out ./out --all-characters --min-posts 20",
+    "  splice lync archive --source ./archive --out ./out/twitter.lync",
     "",
     "Docs: https://github.com/deepfates/splice • Context: https://deepfates.com/convert-your-twitter-archive-into-training-data",
   ].join("\n");
