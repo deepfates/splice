@@ -179,7 +179,7 @@ Glowfic board (all characters, HuggingFace dataset format):
 
 `splice lync <command>` converts archives into append-only `.lync` event files
 (the lync FORMAT.md envelope). Every command writes the file, re-verifies it
-with lync-core (every line must classify `accepted`), and prints the full
+with @deepfates/lync (every line must classify `accepted`), and prints the full
 stats block — emitted/skipped counts with per-record reasons, timestamp
 fallbacks, verify counts — as JSON to stdout. Logs stay on stderr. Nothing is
 dropped silently.
