@@ -40,6 +40,11 @@ export * from "./outputs/lync-tweet-embed.js";
 // OCR text page sets → lync (dee-b8zk)
 export * from "./outputs/lync-ocr.js";
 
+// Claude Code + codex session JSONL → lync (dee-07pu)
+export * from "./outputs/lync-session-batch.js";
+export * from "./outputs/lync-claude-session.js";
+export * from "./outputs/lync-codex-session.js";
+
 /* ------------------------------- Extensions ------------------------------- */
 
 import type { Level, ContentItem, Thread } from "./core/types.js";
