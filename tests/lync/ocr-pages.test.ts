@@ -78,7 +78,7 @@ describe.skipIf(!hasRealDir)(
         expect(result.stats.gaps).toEqual([]);
         expect(result.stats.emptyFiles).toEqual([]);
 
-        // verifier-clean: ALL written lines accepted by lync-core
+        // verifier-clean: ALL written lines accepted by @deepfates/lync
         expect(result.verify.ok).toBe(true);
         expect(result.verify.problems).toEqual([]);
         expect(result.verify.counts.lines).toBe(102);

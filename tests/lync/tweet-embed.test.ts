@@ -291,7 +291,7 @@ describe(`end-to-end against ${realDir ? "the REAL deep-space cache" : "the fixt
         expect(result.stats.skipped).toEqual([]);
       }
 
-      // verifier-clean: ALL lines accepted by lync-core, zero problems
+      // verifier-clean: ALL lines accepted by @deepfates/lync, zero problems
       expect(result.verify.ok).toBe(true);
       expect(result.verify.problems).toEqual([]);
       expect(result.verify.counts.lines).toBe(result.stats.emitted);

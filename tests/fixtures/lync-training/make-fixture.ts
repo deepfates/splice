@@ -16,8 +16,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { serializeLyncEvent } from "lync-core/store";
-import type { LyncEventBody } from "lync-core/events";
+import { serializeLyncEvent } from "@deepfates/lync/store";
+import type { LyncEventBody } from "@deepfates/lync/events";
 
 export const FIXTURE_IDS = {
   A: "0197e6a0-4a00-7000-8000-00000000000a",

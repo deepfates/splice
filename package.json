@@ -57,8 +57,8 @@
     "@atproto/api": "^0.18.0",
     "@atproto/repo": "^0.8.10",
     "cosmiconfig": "^9.0.0",
-    "glowfic-dl": "^0.2.1",
-    "lync-core": "file:vendor/lync-packages/lync-core-0.2.0.tgz"
+    "@deepfates/lync": "0.3.0",
+    "glowfic-dl": "^0.2.1"
   },
   "devDependencies": {
     "@types/node": "^22.7.4",

@@ -18,7 +18,7 @@
  * files (the largest observed rollout is ~1.8GB, past V8's ~512MB string
  * limit), so inputs are read line-by-line, outputs are written through a
  * stream, and verification re-parses the written file in newline-aligned
- * chunks — every chunk through lync-core's own parser, with same-id
+ * chunks — every chunk through @deepfates/lync's own parser, with same-id
  * conflict detection carried across chunks via the parser's body digests.
  *
  * Every written `.lync` file must verify 100% accepted (pacts/import.md
@@ -31,9 +31,9 @@ import * as path from "node:path";
 import * as readline from "node:readline";
 import { once } from "node:events";
 
-import { serializeLyncEvent } from "lync-core/store";
-import { parseLyncFiles } from "lync-core/events";
-import type { LyncEventBody } from "lync-core/events";
+import { serializeLyncEvent } from "@deepfates/lync/store";
+import { parseLyncFiles } from "@deepfates/lync/events";
+import type { LyncEventBody } from "@deepfates/lync/events";
 
 import {
   isRfc3339,
@@ -149,7 +149,7 @@ const VERIFY_CHUNK_BYTES = 32 * 1024 * 1024;
 
 /**
  * Verify a written `.lync` file of any size: re-parse it in newline-aligned
- * chunks, EVERY chunk through lync-core's parseLyncFiles, and require every
+ * chunks, EVERY chunk through @deepfates/lync's parseLyncFiles, and require every
  * line to classify `accepted`. Same-id conflict detection (same id, different
  * body bytes) is carried across chunks using the parser's own body digests,
  * so the verdict matches lync.ts's verifyLyncFile — this variant just never
@@ -367,7 +367,7 @@ export interface SessionFileLyncConversion {
 
 /**
  * End-to-end for ONE session file, streaming throughout: map line-by-line,
- * write the `.lync`, then re-verify it chunked through lync-core. Throws
+ * write the `.lync`, then re-verify it chunked through @deepfates/lync. Throws
  * loudly on any non-accepted line or count drift.
  */
 export async function convertSessionFileToLync(
@@ -392,7 +392,7 @@ export async function convertSessionFileToLync(
 
 /**
  * Convert every `.jsonl` session file under `inputDir` to a mirrored `.lync`
- * file under `outputDir`, verifying each written file with lync-core.
+ * file under `outputDir`, verifying each written file with @deepfates/lync.
  *
  * File-level accounting is loud: converted + unreadable === discovered, every
  * per-file mapping must reconcile (the mappers throw when theirs does not),

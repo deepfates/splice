@@ -216,7 +216,7 @@ describe("codex rollout JSONL → lync mapping", () => {
     }
   });
 
-  it("end-to-end: written file is 100% accepted by lync-core", async () => {
+  it("end-to-end: written file is 100% accepted by @deepfates/lync", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "splice-codex-"));
     try {
       const input = path.join(dir, LOCATOR);

@@ -47,15 +47,15 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
-import { parseLyncFiles } from "lync-core/events";
+import { parseLyncFiles } from "@deepfates/lync/events";
 import type {
   LyncEventBody,
   LyncLineDiagnostic,
   LyncObstacle,
   LyncParseResult,
-} from "lync-core/events";
-import { lyncLeaderboardView, lyncTranscriptView } from "lync-core/views";
-import type { LyncLeaderboardEntry, LyncScoreReference } from "lync-core/views";
+} from "@deepfates/lync/events";
+import { lyncLeaderboardView, lyncTranscriptView } from "@deepfates/lync/views";
+import type { LyncLeaderboardEntry, LyncScoreReference } from "@deepfates/lync/views";
 
 /* --------------------------------- Types ---------------------------------- */
 

@@ -28,16 +28,16 @@
  * ZERO SILENT DROPS: every source record either becomes an event or lands in
  * an explicit `skipped` stats entry with its index and reason. Timestamp
  * repairs are surfaced in `timestampFallbacks`. Verification requires every
- * written line to be classified `accepted` by lync-core's parser.
+ * written line to be classified `accepted` by @deepfates/lync's parser.
  */
 
 import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
-import { serializeLyncEvent } from "lync-core/store";
-import { parseLyncFiles } from "lync-core/events";
-import type { LyncEventBody } from "lync-core/events";
+import { serializeLyncEvent } from "@deepfates/lync/store";
+import { parseLyncFiles } from "@deepfates/lync/events";
+import type { LyncEventBody } from "@deepfates/lync/events";
 
 import type { ContentItem, Thread } from "../core/types.js";
 
@@ -545,7 +545,7 @@ export function glowficExportToLyncEvents(
 /* ------------------------------ Write + verify ----------------------------- */
 
 /**
- * Serialize events with lync-core's serializeLyncEvent and write a `.lync`
+ * Serialize events with @deepfates/lync's serializeLyncEvent and write a `.lync`
  * file: UTF-8, one event per line, LF-terminated.
  */
 export async function writeLyncFile(
@@ -558,7 +558,7 @@ export async function writeLyncFile(
 }
 
 /**
- * Re-parse a written `.lync` file with lync-core's parseLyncFiles and require
+ * Re-parse a written `.lync` file with @deepfates/lync's parseLyncFiles and require
  * EVERY line to classify `accepted` (zero garbage/damaged/nonconforming/
  * conflict-variant). Returns counts {lines, events, accepted, byKind} and an
  * explicit list of problems — never a silent verdict.
@@ -611,7 +611,7 @@ export interface GlowficLyncConversion {
 
 /**
  * End-to-end: read a glowfic-dl JSON export (thread.json), map to lync
- * events, write a `.lync` file, then verify the written file with lync-core.
+ * events, write a `.lync` file, then verify the written file with @deepfates/lync.
  * Throws loudly when the verifier finds any non-accepted line.
  */
 export async function convertGlowficExportToLync(

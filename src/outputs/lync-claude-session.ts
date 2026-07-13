@@ -51,7 +51,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
-import type { LyncEventBody } from "lync-core/events";
+import type { LyncEventBody } from "@deepfates/lync/events";
 
 import {
   DEFAULT_OPERATOR,
@@ -372,7 +372,7 @@ export interface ClaudeSessionLyncConversion {
 
 /**
  * End-to-end: read one Claude Code session JSONL file, map to lync events,
- * write a `.lync` file, then verify the written file with lync-core. Throws
+ * write a `.lync` file, then verify the written file with @deepfates/lync. Throws
  * loudly when the verifier finds any non-accepted line.
  */
 export async function convertClaudeSessionToLync(
