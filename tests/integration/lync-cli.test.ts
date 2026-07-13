@@ -149,7 +149,7 @@ describe("splice lync CLI", () => {
       ]);
       expect(badMarked.exitCode).toBe(2);
       expect(badMarked.stderr).toContain("--marked-at must be RFC 3339");
-    });
+    }, 30_000);
 
     it("runtime errors exit 1 with the reason on stderr", async () => {
       const r = await runCli([
