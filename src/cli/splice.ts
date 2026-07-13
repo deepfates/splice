@@ -35,6 +35,7 @@ import {
   storeConversationsJSON,
 } from "../core/store.js";
 import { decisionsFromIds } from "../core/decisions.js";
+import { runLync } from "./lync.js";
 
 /* -------------------------------- version -------------------------------- */
 
@@ -56,6 +57,13 @@ async function getVersion(): Promise<string> {
 /* ---------------------------------- main ---------------------------------- */
 
 async function main() {
+  // Subcommand surface: `splice lync <command>` converts archives to .lync
+  // event files. Handled before flag parsing; runLync always exits.
+  if (process.argv[2] === "lync") {
+    await runLync(process.argv);
+    return;
+  }
+
   const opts: CLIOptions = parseArgs(process.argv);
   if (opts.help) {
     process.stderr.write(usage() + "\n");
