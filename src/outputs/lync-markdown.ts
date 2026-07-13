@@ -26,17 +26,17 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
-import { parseLyncFiles } from "lync-core/events";
-import type { LyncParseResult } from "lync-core/events";
+import { parseLyncFiles } from "@deepfates/lync/events";
+import type { LyncParseResult } from "@deepfates/lync/events";
 import {
   lyncBranchTreeView,
   lyncLeaderboardView,
   lyncTranscriptView,
-} from "lync-core/views";
+} from "@deepfates/lync/views";
 import type {
   LyncBranchTreeNode,
   LyncLeaderboardEntry,
-} from "lync-core/views";
+} from "@deepfates/lync/views";
 
 /* --------------------------------- Types ---------------------------------- */
 

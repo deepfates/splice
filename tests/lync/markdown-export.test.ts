@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { parseLyncFiles } from "lync-core/events";
+import { parseLyncFiles } from "@deepfates/lync/events";
 
 import {
   renderLyncMarkdown,

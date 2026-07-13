@@ -3,8 +3,8 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { serializeLyncEvent } from "lync-core/store";
-import type { LyncEventBody } from "lync-core/events";
+import { serializeLyncEvent } from "@deepfates/lync/store";
+import type { LyncEventBody } from "@deepfates/lync/events";
 
 import {
   convertSessionFileToLync,
@@ -163,7 +163,7 @@ describe("superlinear regression (dee-07pu)", () => {
     async () => {
       // 10k function_call/function_call_output pairs = 20k events whose
       // parent edges form a ladder (output → [previous, its call]). The
-      // pre-fix lync-core cycle scan was an unmemoized per-event DFS —
+      // pre-fix @deepfates/lync cycle scan was an unmemoized per-event DFS —
       // exponential on exactly this shape (a ~200-event real rollout ran for
       // hours); anything quadratic in events also blows the budget here.
       // Fixed pipeline: a few seconds. Synthetic content only.

@@ -77,7 +77,7 @@ interface LyncCliReport {
   dryRun: boolean;
   /** Converter stats: emitted/skipped counts with per-record reasons. */
   stats: unknown;
-  /** lync-core re-parse of the written file. Absent on --dry-run. */
+  /** @deepfates/lync re-parse of the written file. Absent on --dry-run. */
   verify?: LyncVerifyResult;
   [key: string]: unknown;
 }
@@ -117,7 +117,7 @@ export function lyncUsage(): string {
     "  --help, -h                 Show this help",
     "",
     "Output:",
-    "  The .lync file is written to --out, then re-verified with lync-core (every line",
+    "  The .lync file is written to --out, then re-verified with @deepfates/lync (every line",
     "  must classify `accepted`). The full stats block — emitted/skipped counts with",
     "  per-record reasons, timestamp fallbacks, verify counts — prints to stdout as JSON;",
     "  logs stay on stderr. Nothing is dropped silently.",
@@ -255,7 +255,7 @@ function parseLyncArgs(
 type Logger = (lvl: Level, msg: string) => void;
 
 /**
- * Write events and re-verify the file with lync-core, loudly: any
+ * Write events and re-verify the file with @deepfates/lync, loudly: any
  * non-accepted line or count drift is a thrown error, never a shrug.
  */
 async function writeAndVerify(

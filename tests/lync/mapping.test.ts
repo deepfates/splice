@@ -167,7 +167,7 @@ describe("threadsToLyncEvents", () => {
 });
 
 describe("write + verify round trip", () => {
-  it("writes a .lync file that lync-core accepts on every line", async () => {
+  it("writes a .lync file that @deepfates/lync accepts on every line", async () => {
     const os = await import("node:os");
     const path = await import("node:path");
     const fs = await import("node:fs/promises");

@@ -47,7 +47,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
-import type { LyncEventBody } from "lync-core/events";
+import type { LyncEventBody } from "@deepfates/lync/events";
 
 import {
   buildAuthor,
@@ -441,7 +441,7 @@ export interface TweetEmbedCacheConversion {
 /**
  * End-to-end: read every `.json` file in the cache dir (READ ONLY — splice
  * never writes into the source dir), map to lync events, write a `.lync`
- * file, verify with lync-core, and throw loudly on any non-accepted line or
+ * file, verify with @deepfates/lync, and throw loudly on any non-accepted line or
  * count mismatch. Unreadable files are explicit skips, not crashes.
  */
 export async function convertTweetEmbedCacheToLync(
