@@ -34,6 +34,11 @@ const realDirCandidates = [
 ].filter((p): p is string => typeof p === "string" && p.length > 0);
 const realDir = realDirCandidates.find((p) => fssync.existsSync(p));
 const cacheDir = realDir ?? fixtureDir;
+if (!realDir) {
+  console.warn(
+    `[tweet-embed.test] real deep-space cache not found (tried: ${realDirCandidates.join(", ")}) — e2e runs against the 3-file fixture; set SPLICE_DEEPSPACE_EMBED_CACHE to the tweets cache dir to run it for real`,
+  );
+}
 
 async function loadFixture(name: string): Promise<TweetEmbedCacheFile> {
   return { file: name, text: await fs.readFile(path.join(fixtureDir, name), "utf8") };
@@ -265,7 +270,7 @@ describe("zero silent drops", () => {
   });
 });
 
-describe(`end-to-end against ${realDir ? "the REAL deep-space cache" : "the fixture cache"}`, () => {
+describe(`end-to-end against ${realDir ? "the REAL deep-space cache" : "the fixture cache (set SPLICE_DEEPSPACE_EMBED_CACHE for the real cache)"}`, () => {
   it("counts reconcile exactly: files in = events out + explicit skips; verifier-clean", async () => {
     const jsonFiles = (await fs.readdir(cacheDir)).filter((f) =>
       f.endsWith(".json"),
