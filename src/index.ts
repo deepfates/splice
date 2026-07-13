@@ -40,6 +40,9 @@ export * from "./outputs/lync-tweet-embed.js";
 // OCR text page sets → lync (dee-b8zk)
 export * from "./outputs/lync-ocr.js";
 
+// lync → training data exporter (dee-lqk3; SFT + preference pairs)
+export * from "./outputs/lync-training.js";
+
 /* ------------------------------- Extensions ------------------------------- */
 
 import type { Level, ContentItem, Thread } from "./core/types.js";
