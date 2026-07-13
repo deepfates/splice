@@ -255,7 +255,10 @@ describe("claude session JSONL → lync mapping", () => {
 });
 
 describe("claude session tree batch: zero silent drops at the file level", () => {
-  it("unreadable and non-jsonl files are counted and named; totals reconcile", async () => {
+  // chmod 000 is a no-op on Windows, so "discoverable but unreadable" cannot
+  // be staged there; the unreadable leg runs on the POSIX matrix legs and
+  // skips loudly here (totals logic is platform-independent and covered).
+  it.skipIf(process.platform === "win32")("unreadable and non-jsonl files are counted and named; totals reconcile", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "splice-claude-tree-"));
     const outDir = await fs.mkdtemp(path.join(os.tmpdir(), "splice-claude-out-"));
     const locked = path.join(root, "project-a", "locked.jsonl");
