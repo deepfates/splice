@@ -63,6 +63,7 @@ export interface LyncMarkdownStats {
   branch_sections: number;
   annotations_rendered: number;
   annotations_ignored: number;
+  annotations_unattached: number;
   events_rendered: number;
   obstacles: number;
   partial: boolean;
@@ -689,6 +690,18 @@ export function renderLyncMarkdown(
   doc.push(
     `- ${plural(result.lines.length, "line")}: ${classCounts.accepted} accepted, ${classCounts.nonconforming} nonconforming, ${classCounts.garbage} garbage, ${classCounts.damaged} damaged, ${classCounts["conflict-variant"]} conflict variants.`,
   );
+  /* Annotations that never attached to rendered content: their payloads are
+     shown below, never dropped (export pact: the projection says what it
+     could not place). */
+  const unattachedAnnotationIds = allIds.filter((id) => {
+    const node = nodes.get(id)!;
+    return (
+      node.event.kind === "lync/annotation" &&
+      !node.payloadSuppressed &&
+      !annotationsRendered.has(id)
+    );
+  });
+
   const cleanGraph =
     result.graphDiagnostics.length === 0 &&
     result.conflictIds.length === 0 &&
@@ -696,6 +709,7 @@ export function renderLyncMarkdown(
     classCounts.damaged === 0 &&
     classCounts.nonconforming === 0 &&
     board.ignoredAnnotationIds.length === 0 &&
+    unattachedAnnotationIds.length === 0 &&
     result.pendingOverflowCount === 0;
   if (cleanGraph) {
     doc.push("- No dangling parents, cycles, or conflicts on the rendered threads.");
@@ -737,6 +751,17 @@ export function renderLyncMarkdown(
   for (const annId of board.ignoredAnnotationIds) {
     doc.push(
       `- **Annotation not interpreted** ${inlineCode(shortId(annId))} — malformed score/selection payload; shown verbatim where its target is rendered.`,
+    );
+  }
+  for (const annId of unattachedAnnotationIds) {
+    const ev = nodes.get(annId)!.event;
+    const label = typeof ev.payload["label"] === "string" ? ev.payload["label"] : "annotation";
+    const targets =
+      ev.parents.length > 0
+        ? `on ${ev.parents.map((p) => inlineCode(shortId(p))).join(", ")} (not rendered above)`
+        : "with no target";
+    doc.push(
+      `- **Annotation on unrendered target** ${inlineCode(shortId(annId))} — **${label}** by ${ev.author.actor}, ${ev.at}, ${targets}: ${inlineCode(JSON.stringify(ev.payload))}`,
     );
   }
   if (suppressedIds.size > 0) {
@@ -783,6 +808,7 @@ export function renderLyncMarkdown(
     branch_sections: branchSections,
     annotations_rendered: annotationsRendered.size,
     annotations_ignored: board.ignoredAnnotationIds.length,
+    annotations_unattached: unattachedAnnotationIds.length,
     events_rendered: renderedContent.size,
     obstacles: result.graphDiagnostics.length,
     partial:

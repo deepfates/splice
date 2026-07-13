@@ -73,6 +73,7 @@ describe("lync → markdown golden fixture", () => {
       branch_sections: 2,
       annotations_rendered: 3,
       annotations_ignored: 0,
+      annotations_unattached: 0,
       events_rendered: 8, // A B G J on the thread, C F Y in sections, H in a footnote
       obstacles: 1, // Y's walk is stopped by the conflict on X
       partial: true, // and the document says so
@@ -360,5 +361,49 @@ describe("FORMAT.md worked example (five events, real ids)", () => {
     expect(render.markdown).toContain(
       "- No dangling parents, cycles, or conflicts on the rendered threads.",
     );
+  });
+});
+
+describe("annotations on unrendered targets are never silently dropped", () => {
+  // Refutation repro (dee-5xu4 adversarial review, 2026-07-12): a revision
+  // annotation on another annotation, a decision annotation on a conflicted
+  // id, and a parentless score. All three are view-eligible but attach to
+  // nothing the document renders — their payloads must still appear.
+  const R1 = "019800c0-0000-7000-8000-0000000000e1"; // revision on annotation D
+  const R2 = "019800c1-0000-7000-8000-0000000000e2"; // decision on conflicted X
+  const R3 = "019800c2-0000-7000-8000-0000000000e3"; // parentless score
+
+  const extraLines =
+    [
+      `{"v":1,"id":"${R1}","kind":"lync/annotation","at":"2026-07-12T00:00:01Z","author":{"actor":"reviewer"},"parents":["${D}"],"payload":{"label":"revision","note":"SECRET-NOTE-ON-ANNOTATION"}}`,
+      `{"v":1,"id":"${R2}","kind":"lync/annotation","at":"2026-07-12T00:00:02Z","author":{"actor":"reviewer"},"parents":["${X}"],"payload":{"label":"decision","note":"conflict stands"}}`,
+      `{"v":1,"id":"${R3}","kind":"lync/annotation","at":"2026-07-12T00:00:03Z","author":{"actor":"reviewer"},"parents":[],"payload":{"label":"score","value":0.5}}`,
+    ].join("\n") + "\n";
+
+  async function renderWithUnattached() {
+    const base = await fs.readFile(fixturePath, "utf8");
+    const bytes = new TextEncoder().encode(base + extraLines);
+    const result = parseLyncFiles([{ file: "loom.lync", bytes }]);
+    return renderLyncMarkdown(result, { title: "loom.lync" });
+  }
+
+  it("every unattached payload appears in the document, with a count", async () => {
+    const render = await renderWithUnattached();
+    expect(render.markdown).toContain("SECRET-NOTE-ON-ANNOTATION");
+    expect(render.markdown).toContain("conflict stands");
+    for (const id of [R1, R2, R3]) {
+      expect(render.markdown).toContain(id.slice(0, 8));
+    }
+    const sweepLines = render.markdown
+      .split("\n")
+      .filter((l) => l.includes("**Annotation on unrendered target**"));
+    expect(sweepLines).toHaveLength(3);
+    expect(render.stats.annotations_unattached).toBe(3);
+  });
+
+  it("the base fixture has zero unattached annotations (golden unchanged)", async () => {
+    const render = await renderFixture();
+    expect(render.stats.annotations_unattached).toBe(0);
+    expect(render.markdown).not.toContain("Annotation on unrendered target");
   });
 });
