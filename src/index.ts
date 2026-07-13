@@ -40,6 +40,9 @@ export * from "./outputs/lync-tweet-embed.js";
 // OCR text page sets → lync (dee-b8zk)
 export * from "./outputs/lync-ocr.js";
 
+// lync → readable markdown transcript (dee-5xu4; export pact projection)
+export * from "./outputs/lync-markdown.js";
+
 /* ------------------------------- Extensions ------------------------------- */
 
 import type { Level, ContentItem, Thread } from "./core/types.js";
