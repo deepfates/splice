@@ -40,6 +40,8 @@ export * from "./outputs/lync-tweet-embed.js";
 // OCR text page sets → lync (dee-b8zk)
 export * from "./outputs/lync-ocr.js";
 
+// lync → training data exporter (dee-lqk3; SFT + preference pairs)
+export * from "./outputs/lync-training.js";
 // lync → readable markdown transcript (dee-5xu4; export pact projection)
 export * from "./outputs/lync-markdown.js";
 
