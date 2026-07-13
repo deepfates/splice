@@ -169,22 +169,31 @@ export async function verifyLyncFileStreaming(
   const handle = await fs.open(filePath, "r");
   try {
     const chunk = Buffer.alloc(VERIFY_CHUNK_BYTES);
-    let carry = Buffer.alloc(0);
+    // Bytes after the last newline seen so far, as a LIST of buffers: a single
+    // event line larger than the chunk size accumulates one part per read and
+    // is concatenated ONCE when its newline arrives (or at EOF). Concatenating
+    // carry+chunk every read instead would re-copy the whole accumulated line
+    // per 32MB read — O(line² / chunk) on multi-GB single-line pathologies.
+    let carryParts: Buffer[] = [];
     let lineOffset = 0;
     for (;;) {
       const { bytesRead } = await handle.read(chunk, 0, chunk.length);
       const atEof = bytesRead === 0;
-      let piece = atEof ? carry : Buffer.concat([carry, chunk.subarray(0, bytesRead)]);
-      if (!atEof) {
-        const lastNl = piece.lastIndexOf(0x0a);
+      let piece: Buffer;
+      if (atEof) {
+        piece = carryParts.length === 1 ? carryParts[0] : Buffer.concat(carryParts);
+        carryParts = [];
+      } else {
+        const read = chunk.subarray(0, bytesRead);
+        const lastNl = read.lastIndexOf(0x0a);
         if (lastNl === -1) {
           // No complete line yet — keep accumulating (a single event line
           // can legitimately exceed the chunk size).
-          carry = piece;
+          carryParts.push(Buffer.from(read));
           continue;
         }
-        carry = Buffer.from(piece.subarray(lastNl + 1));
-        piece = piece.subarray(0, lastNl + 1);
+        piece = Buffer.concat([...carryParts, read.subarray(0, lastNl + 1)]);
+        carryParts = [Buffer.from(read.subarray(lastNl + 1))];
       }
       if (piece.length > 0) {
         const result = parseLyncFiles([{ file: filePath, bytes: piece }]);

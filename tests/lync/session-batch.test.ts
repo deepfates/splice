@@ -7,10 +7,12 @@ import { serializeLyncEvent } from "lync-core/store";
 import type { LyncEventBody } from "lync-core/events";
 
 import {
+  convertSessionFileToLync,
   scanSessionTree,
   splitSessionJsonl,
   verifyLyncFileStreaming,
 } from "../../src/outputs/lync-session-batch.js";
+import { createCodexSessionLineMapper } from "../../src/outputs/lync-codex-session.js";
 import {
   deterministicLyncId,
   verifyLyncFile,
@@ -108,25 +110,108 @@ describe("verifyLyncFileStreaming", () => {
     }
   });
 
-  it("crosses chunk boundaries: a file larger than one 32MB chunk verifies clean", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "splice-vfs-big-"));
-    try {
-      const file = path.join(dir, "big.lync");
-      // ~40 events x ~1MB pad ≈ 40MB → at least two chunks, with a line
-      // straddling the first chunk boundary carried over correctly.
-      const events = Array.from({ length: 40 }, (_, i) =>
-        syntheticEvent(i, 1024 * 1024),
-      );
-      await writeLyncFile(file, events);
-      const streamed = await verifyLyncFileStreaming(file);
-      expect(streamed.ok).toBe(true);
-      expect(streamed.counts.lines).toBe(40);
-      expect(streamed.counts.accepted).toBe(40);
-      expect(streamed.counts.events).toBe(40);
-    } finally {
-      await fs.rm(dir, { recursive: true, force: true });
-    }
-  });
+  it(
+    "crosses chunk boundaries: a file larger than one 32MB chunk verifies clean",
+    { timeout: 60_000 },
+    async () => {
+      const dir = await fs.mkdtemp(path.join(os.tmpdir(), "splice-vfs-big-"));
+      try {
+        const file = path.join(dir, "big.lync");
+        // ~40 events x ~1MB pad ≈ 40MB → at least two chunks, with a line
+        // straddling the first chunk boundary carried over correctly.
+        const events = Array.from({ length: 40 }, (_, i) =>
+          syntheticEvent(i, 1024 * 1024),
+        );
+        await writeLyncFile(file, events);
+        const streamed = await verifyLyncFileStreaming(file);
+        expect(streamed.ok).toBe(true);
+        expect(streamed.counts.lines).toBe(40);
+        expect(streamed.counts.accepted).toBe(40);
+        expect(streamed.counts.events).toBe(40);
+      } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it(
+    "single event line larger than one 32MB chunk verifies clean (carry stays O(line), dee-07pu)",
+    { timeout: 60_000 },
+    async () => {
+      const dir = await fs.mkdtemp(path.join(os.tmpdir(), "splice-vfs-line-"));
+      try {
+        const file = path.join(dir, "giant-line.lync");
+        // One ~33MB payload → a single serialized line past VERIFY_CHUNK_BYTES:
+        // the carry buffer must accumulate parts without re-copying the whole
+        // accumulated line per read (the O(line²/chunk) shape this guards).
+        await writeLyncFile(file, [syntheticEvent(0, 33 * 1024 * 1024)]);
+        const streamed = await verifyLyncFileStreaming(file);
+        expect(streamed.ok).toBe(true);
+        expect(streamed.counts.lines).toBe(1);
+        expect(streamed.counts.accepted).toBe(1);
+      } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
+});
+
+describe("superlinear regression (dee-07pu)", () => {
+  it(
+    "codex function-call ladder at CI scale converts + verifies inside a fixed budget",
+    { timeout: 60_000 },
+    async () => {
+      // 10k function_call/function_call_output pairs = 20k events whose
+      // parent edges form a ladder (output → [previous, its call]). The
+      // pre-fix lync-core cycle scan was an unmemoized per-event DFS —
+      // exponential on exactly this shape (a ~200-event real rollout ran for
+      // hours); anything quadratic in events also blows the budget here.
+      // Fixed pipeline: a few seconds. Synthetic content only.
+      const PAIRS = 10_000;
+      const dir = await fs.mkdtemp(path.join(os.tmpdir(), "splice-ladder-"));
+      try {
+        const input = path.join(dir, "ladder.jsonl");
+        const lines: string[] = [];
+        for (let i = 0; i < PAIRS; i++) {
+          lines.push(
+            JSON.stringify({
+              timestamp: "2026-01-02T03:04:05.000Z",
+              type: "response_item",
+              payload: {
+                type: "function_call",
+                call_id: `call-${i}`,
+                name: "shell",
+                arguments: "{}",
+              },
+            }),
+            JSON.stringify({
+              timestamp: "2026-01-02T03:04:06.000Z",
+              type: "response_item",
+              payload: {
+                type: "function_call_output",
+                call_id: `call-${i}`,
+                output: "ok",
+              },
+            }),
+          );
+        }
+        await fs.writeFile(input, `${lines.join("\n")}\n`, "utf8");
+        const out = path.join(dir, "ladder.lync");
+        const converted = await convertSessionFileToLync(
+          input,
+          out,
+          createCodexSessionLineMapper("ladder.jsonl", {
+            sourceRef: "ladder.jsonl",
+          }),
+        );
+        expect(converted.verify.ok).toBe(true);
+        expect(converted.stats.emitted).toBe(PAIRS * 2);
+        expect(converted.verify.counts.accepted).toBe(PAIRS * 2);
+      } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe("scanSessionTree", () => {
