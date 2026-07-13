@@ -44,6 +44,10 @@ export * from "./outputs/lync-ocr.js";
 export * from "./outputs/lync-training.js";
 // lync → readable markdown transcript (dee-5xu4; export pact projection)
 export * from "./outputs/lync-markdown.js";
+// Claude Code + codex session JSONL → lync (dee-07pu)
+export * from "./outputs/lync-session-batch.js";
+export * from "./outputs/lync-claude-session.js";
+export * from "./outputs/lync-codex-session.js";
 
 /* ------------------------------- Extensions ------------------------------- */
 
