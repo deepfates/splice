@@ -54,6 +54,8 @@ export * from "./outputs/lync-session-loom.js";
 export * from "./outputs/lync-claudeai-export.js";
 // ChatGPT account export (conversations.json mapping graph) → conversation looms (dee-do4a)
 export * from "./outputs/lync-chatgpt-export.js";
+// Twitter/X archive reply-threads → conversation looms (dee-7biz)
+export * from "./outputs/lync-twitter-threads.js";
 
 /* ------------------------------- Extensions ------------------------------- */
 

@@ -502,6 +502,44 @@ describe("splice lync CLI", () => {
           },
         ]),
       );
+      // Twitter/X archive DIR: a self-thread with a FORK + a standalone tweet +
+      // a retweet, plus a like in a separate data type. Synthetic; the `.js`
+      // files carry the `window.YTD.* = ` prefix a real archive uses.
+      const twArchive = path.join(loomSrc, "twitter-archive");
+      const twData = path.join(twArchive, "data");
+      await fs.mkdir(twData, { recursive: true });
+      await fs.writeFile(
+        path.join(twData, "manifest.js"),
+        "window.__THAR_CONFIG = " +
+          JSON.stringify({
+            dataTypes: {
+              tweets: { files: [{ fileName: "data/tweets.js" }] },
+              like: { files: [{ fileName: "data/like.js" }] },
+            },
+          }),
+      );
+      await fs.writeFile(
+        path.join(twData, "account.js"),
+        "window.YTD.account.part0 = " +
+          JSON.stringify([{ account: { accountId: "111", username: "owner_handle" } }]),
+      );
+      const tw = (t: Record<string, unknown>) => ({ tweet: t });
+      await fs.writeFile(
+        path.join(twData, "tweets.js"),
+        "window.YTD.tweets.part0 = " +
+          JSON.stringify([
+            tw({ id: "s1", id_str: "s1", full_text: "synthetic opener", created_at: "Wed Jul 01 00:00:00 +0000 2026" }),
+            tw({ id: "s2", id_str: "s2", full_text: "synthetic self-reply A", in_reply_to_status_id: "s1", in_reply_to_status_id_str: "s1", created_at: "Wed Jul 01 00:01:00 +0000 2026" }),
+            tw({ id: "s3", id_str: "s3", full_text: "synthetic self-reply B (fork)", in_reply_to_status_id: "s1", in_reply_to_status_id_str: "s1", created_at: "Wed Jul 01 00:02:00 +0000 2026" }),
+            tw({ id: "s4", id_str: "s4", full_text: "synthetic standalone", created_at: "Wed Jul 01 00:03:00 +0000 2026" }),
+            tw({ id: "s5", id_str: "s5", full_text: "RT @someone: synthetic retweet", created_at: "Wed Jul 01 00:04:00 +0000 2026" }),
+          ]),
+      );
+      await fs.writeFile(
+        path.join(twData, "like.js"),
+        "window.YTD.like.part0 = " +
+          JSON.stringify([{ like: { tweetId: "L1", fullText: "a synthetic liked tweet" } }]),
+      );
     });
 
     afterAll(async () => {
@@ -617,6 +655,51 @@ describe("splice lync CLI", () => {
       expect(snapshot.loom.meta.profile).toBe("conversation");
       expect(snapshot.loom.meta.source).toBe("chatgpt-export");
       expect(snapshot.turns).toHaveLength(2);
+    }, 30_000);
+
+    it("twitter-threads: archive dir → looms, fork survives, RT+like counted", async () => {
+      const dir = path.join(outDir, "twitter");
+      const report = await runLyncOk([
+        "twitter-threads",
+        "--source",
+        path.join(loomSrc, "twitter-archive"),
+        "--out-dir",
+        dir,
+      ]);
+
+      expect(report.command).toBe("lync twitter-threads");
+      // Two threads: the 3-tweet self-thread (with fork) + the standalone.
+      expect(report.stats.threads).toBe(2);
+      expect(report.stats.standaloneThreads).toBe(1);
+      expect(report.stats.totalTurns).toBe(4);
+      // The retweet and the like are counted, never silently dropped.
+      expect(report.stats.retweets).toBe(1);
+      expect(report.stats.likes).toBe(1);
+      expect(report.stats.malformed).toBe(0);
+      // sourceRecords = 5 tweets + 1 like = 6; reconciles.
+      expect(report.stats.sourceRecords).toBe(
+        report.stats.totalTurns +
+          report.stats.retweets +
+          report.stats.likes +
+          report.stats.malformed,
+      );
+
+      expect(report.outputs).toHaveLength(2);
+      for (const v of report.verify) {
+        expect(v.ok).toBe(true);
+        expect(v.profile).toBe("conversation");
+      }
+
+      // The self-thread snapshot: owner tweets (deepfates/user), fork preserved.
+      const treeOut = report.outputs.find((o: any) => o.turns === 3)!;
+      const snapshot = await readSnapshot(treeOut.outputPath);
+      expect(snapshot.loom.meta.profile).toBe("conversation");
+      expect(snapshot.loom.meta.source).toBe("twitter-threads");
+      expect(snapshot.turns).toHaveLength(3);
+      // s2 and s3 both reply to s1 → both branched under the same parent turn.
+      const s1 = snapshot.turns.find((t: any) => t.parentId === null);
+      const kids = snapshot.turns.filter((t: any) => t.parentId === s1.id);
+      expect(kids).toHaveLength(2);
     }, 30_000);
 
     it("loom commands reject flags they do not wire (no silent drops)", async () => {
