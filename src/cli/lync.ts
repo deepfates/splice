@@ -25,6 +25,9 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
+import { createLyncLooms, createMemoryEventStore } from "@deepfates/lync";
+import type { LoomSnapshot } from "@deepfates/lync";
+
 import { makeLogger, type Level } from "../core/types.js";
 import { detectTwitterArchive, ingestTwitter } from "../sources/twitter.js";
 import { detectBlueskyCar, ingestBlueskyCar } from "../sources/bluesky.js";
@@ -34,6 +37,7 @@ import {
   writeLyncFile,
   verifyLyncFile,
   isRfc3339,
+  DEFAULT_OPERATOR,
   type GlowficExportThread,
   type LyncProducerOptions,
   type LyncVerifyResult,
@@ -48,11 +52,40 @@ import {
   type TweetEmbedSkippedFile,
   type TweetEmbedStats,
 } from "../outputs/lync-tweet-embed.js";
+import {
+  claudeSessionToLoom,
+  convertClaudeSessionToLoomFile,
+  type SessionLoomStats,
+} from "../outputs/lync-session-loom.js";
+import {
+  claudeAiExportToLooms,
+  convertClaudeAiExportToLoomFiles,
+  type ClaudeAiExportStats,
+} from "../outputs/lync-claudeai-export.js";
+import {
+  chatGptExportToLooms,
+  convertChatGptExportToLoomFiles,
+  type ChatGptExportStats,
+} from "../outputs/lync-chatgpt-export.js";
 
 /* --------------------------------- Types ---------------------------------- */
 
-const LYNC_COMMANDS = ["archive", "glowfic", "ocr", "tweet-embed"] as const;
+const LYNC_COMMANDS = [
+  "archive",
+  "glowfic",
+  "ocr",
+  "tweet-embed",
+  "session-loom",
+  "claudeai-export",
+  "chatgpt-export",
+] as const;
 type LyncCommand = (typeof LYNC_COMMANDS)[number];
+
+/** Loom commands that fan one input into MANY snapshots need `--out-dir`. */
+const DIR_OUTPUT_COMMANDS = new Set<LyncCommand>([
+  "claudeai-export",
+  "chatgpt-export",
+]);
 
 interface LyncCliOptions {
   help: boolean;
@@ -60,6 +93,7 @@ interface LyncCliOptions {
   logLevel: Level;
   source?: string;
   out?: string;
+  outDir?: string;
   operator?: string;
   via?: string;
   sourceRef?: string;
@@ -67,6 +101,9 @@ interface LyncCliOptions {
   actor?: string;
   setLocator?: string;
   archiveIdsFile?: string;
+  userActor?: string;
+  assistantActor?: string;
+  title?: string;
 }
 
 /** What every command prints to stdout: the stats block, nothing hidden. */
@@ -82,24 +119,64 @@ interface LyncCliReport {
   [key: string]: unknown;
 }
 
+/** Re-open check on a written `.loom.json` — the exact import textile performs. */
+interface LoomVerifyResult {
+  outputPath: string;
+  ok: boolean;
+  /** `loom.meta.profile`; must be "conversation" for textile to open it. */
+  profile: string | null;
+  /** Turn count in the written snapshot (matched against the reported stats). */
+  turns: number;
+  /** Every mismatch, spelled out — never a silent shrug. */
+  problems: string[];
+}
+
+/**
+ * What a loom command prints to stdout. Same discipline as LyncCliReport (full
+ * stats + verify to stdout, logs to stderr) but the outputs are `.loom.json`
+ * snapshots: `out` for the single-file session-loom, `outDir` + `outputs[]` for
+ * the export commands that fan out one snapshot per conversation.
+ */
+interface LoomCliReport {
+  command: string;
+  source: string;
+  dryRun: boolean;
+  out?: string;
+  outDir?: string;
+  /** Written snapshot files, in order (empty on --dry-run). */
+  outputs: { outputPath: string; [key: string]: unknown }[];
+  /** Converter stats: turn/skip/placeholder counts, per conversation. */
+  stats: unknown;
+  /** Re-open check per written file. Absent on --dry-run. */
+  verify?: LoomVerifyResult[];
+  [key: string]: unknown;
+}
+
 /* --------------------------------- Usage ---------------------------------- */
 
 export function lyncUsage(): string {
   return [
-    "splice lync — convert archives to lync event files (.lync)",
+    "splice lync — convert archives to lync event files (.lync) and looms (.loom.json)",
     "",
     "Usage:",
     "  splice lync <command> --source <path> --out <file.lync> [options]",
+    "  splice lync session-loom     --source <session.jsonl> --out <file.loom.json>",
+    "  splice lync claudeai-export  --source <conversations.json> --out-dir <dir>",
+    "  splice lync chatgpt-export   --source <conversations.json> --out-dir <dir>",
     "",
     "Commands:",
-    "  archive        Twitter archive directory or Bluesky .car file → .lync",
-    "  glowfic        glowfic-dl JSON export (thread.json) → .lync",
-    "  ocr            OCR page-set directory (page-NNN.txt, page-NNN.desc.txt, *.md) → .lync",
-    "  tweet-embed    tweet embed cache directory (<tweetid>-light.json oEmbed files) → .lync",
+    "  archive          Twitter archive directory or Bluesky .car file → .lync",
+    "  glowfic          glowfic-dl JSON export (thread.json) → .lync",
+    "  ocr              OCR page-set directory (page-NNN.txt, page-NNN.desc.txt, *.md) → .lync",
+    "  tweet-embed      tweet embed cache directory (<tweetid>-light.json oEmbed files) → .lync",
+    "  session-loom     Claude Code session (.jsonl) → one conversation .loom.json textile opens",
+    "  claudeai-export  Claude.ai export (conversations.json) → one .loom.json per chat",
+    "  chatgpt-export   ChatGPT export (conversations.json) → one .loom.json per chat",
     "",
     "Options:",
     "  --source <path>            Input path (directory or file, per command)",
-    "  --out <file>               Output .lync file path",
+    "  --out <file>               Output file path (.lync, or .loom.json for session-loom)",
+    "  --out-dir <dir>            Output directory for the fan-out looms (claudeai/chatgpt export)",
     "  --operator <name>          author.operator on every event (default: deepfates)",
     "  --via <tool@version>       author.via override (default: per command)",
     "  --source-ref <ref>         author.source prefix (default: the --source path)",
@@ -110,17 +187,23 @@ export function lyncUsage(): string {
     "  --archive-ids-file <path>  Tweet ids known to the canonical archive import, JSON array",
     "                             or one id per line; matching embeds parent to the archive",
     "                             tweet events (tweet-embed)",
-    "  --dry-run, -n              Map and report stats; don't write the .lync file",
+    "  --user-actor <name>        Actor stamped on human turns (loom commands; default: deepfates)",
+    "  --assistant-actor <name>   Fallback actor for assistant turns with no model id",
+    "                             (claudeai/chatgpt export; default: assistant)",
+    "  --title <text>             Human title stamped into the loom meta (session-loom)",
+    "  --dry-run, -n              Map and report stats; don't write any output file",
     "  --log-level <level>        debug|info|warn|error (default: info)",
     "  --quiet, -q                Errors only",
     "  --verbose                  Debug logging",
     "  --help, -h                 Show this help",
     "",
     "Output:",
-    "  The .lync file is written to --out, then re-verified with @deepfates/lync (every line",
-    "  must classify `accepted`). The full stats block — emitted/skipped counts with",
-    "  per-record reasons, timestamp fallbacks, verify counts — prints to stdout as JSON;",
-    "  logs stay on stderr. Nothing is dropped silently.",
+    "  A .lync file is written to --out, then re-verified with @deepfates/lync (every line",
+    "  must classify `accepted`). A loom command writes .loom.json snapshot(s), then re-opens",
+    "  each through the real Looms API (the exact import textile performs) and confirms",
+    "  loom.meta.profile is \"conversation\". The full stats block — emitted/skipped/placeholder",
+    "  counts with per-record reasons, timestamp fallbacks, verify counts — prints to stdout as",
+    "  JSON; logs stay on stderr. Nothing is dropped silently.",
     "",
     "Examples:",
     "  splice lync archive --source ~/Downloads/my-twitter-archive --out ./out/twitter.lync",
@@ -128,6 +211,9 @@ export function lyncUsage(): string {
     "  splice lync glowfic --source ./thread.json --out ./out/thread-5506.lync",
     "  splice lync ocr --source ../deep-space/data/signal-ocr --out ./out/signal-ocr.lync",
     "  splice lync tweet-embed --source ../deep-space/.embed-cache/tweets --out ./out/embeds.lync",
+    "  splice lync session-loom --source ~/.claude/projects/<id>/<sessionId>.jsonl --out ./out/session.loom.json",
+    "  splice lync claudeai-export --source ~/Downloads/conversations.json --out-dir ./out/claudeai-looms",
+    "  splice lync chatgpt-export --source ~/Downloads/conversations.json --out-dir ./out/chatgpt-looms",
     "",
     "Docs: https://github.com/deepfates/splice • lync format: lync FORMAT.md",
   ].join("\n");
@@ -135,15 +221,10 @@ export function lyncUsage(): string {
 
 /* ---------------------------------- Args ----------------------------------- */
 
-/** Flags every lync command accepts. */
-const COMMON_FLAGS = new Set([
+/** Mode + logging + input flags every lync command accepts. */
+const BASE_FLAGS = new Set([
   "--source",
   "--archive-path",
-  "--out",
-  "--operator",
-  "--via",
-  "--source-ref",
-  "--marked-at",
   "--dry-run",
   "-n",
   "--log-level",
@@ -154,12 +235,48 @@ const COMMON_FLAGS = new Set([
   "-h",
 ]);
 
-/** Extra flags per command; anything else is a hard error, never ignored. */
+/** Provenance flags shared by the `.lync` writers (not the loom commands). */
+const LYNC_PROVENANCE_FLAGS = [
+  "--out",
+  "--operator",
+  "--via",
+  "--source-ref",
+  "--marked-at",
+];
+
+/**
+ * The exact accepted-flag surface per command; anything else is a hard error,
+ * never ignored (an accepted-but-ignored flag would be a silent drop). Each set
+ * lists ONLY the flags that command actually wires to its adapter — the loom
+ * commands do not accept `--via`/`--marked-at`/`--actor` because they do not use
+ * them.
+ */
 const COMMAND_FLAGS: Record<LyncCommand, Set<string>> = {
-  archive: new Set(["--actor"]),
-  glowfic: new Set(),
-  ocr: new Set(["--actor", "--set-locator"]),
-  "tweet-embed": new Set(["--archive-ids-file"]),
+  archive: new Set([...LYNC_PROVENANCE_FLAGS, "--actor"]),
+  glowfic: new Set(LYNC_PROVENANCE_FLAGS),
+  ocr: new Set([...LYNC_PROVENANCE_FLAGS, "--actor", "--set-locator"]),
+  "tweet-embed": new Set([...LYNC_PROVENANCE_FLAGS, "--archive-ids-file"]),
+  "session-loom": new Set([
+    "--out",
+    "--operator",
+    "--source-ref",
+    "--user-actor",
+    "--title",
+  ]),
+  "claudeai-export": new Set([
+    "--out-dir",
+    "--operator",
+    "--source-ref",
+    "--user-actor",
+    "--assistant-actor",
+  ]),
+  "chatgpt-export": new Set([
+    "--out-dir",
+    "--operator",
+    "--source-ref",
+    "--user-actor",
+    "--assistant-actor",
+  ]),
 };
 
 function parseLyncArgs(
@@ -176,7 +293,7 @@ function parseLyncArgs(
   let wantsQuiet = false;
   let wantsVerbose = false;
 
-  const allowed = new Set([...COMMON_FLAGS, ...COMMAND_FLAGS[command]]);
+  const allowed = new Set([...BASE_FLAGS, ...COMMAND_FLAGS[command]]);
   const takeValue = (flag: string, i: number): string => {
     const v = args[i + 1];
     if (v === undefined || v.startsWith("-")) {
@@ -196,6 +313,14 @@ function parseLyncArgs(
       opts.source = takeValue(a, i++);
     } else if (a === "--out") {
       opts.out = takeValue(a, i++);
+    } else if (a === "--out-dir") {
+      opts.outDir = takeValue(a, i++);
+    } else if (a === "--user-actor") {
+      opts.userActor = takeValue(a, i++);
+    } else if (a === "--assistant-actor") {
+      opts.assistantActor = takeValue(a, i++);
+    } else if (a === "--title") {
+      opts.title = takeValue(a, i++);
     } else if (a === "--operator") {
       opts.operator = takeValue(a, i++);
     } else if (a === "--via") {
@@ -242,7 +367,11 @@ function parseLyncArgs(
   if (opts.help) return opts;
 
   if (!opts.source) usageError(`\`splice lync ${command}\` requires --source`);
-  if (!opts.out) usageError(`\`splice lync ${command}\` requires --out`);
+  if (DIR_OUTPUT_COMMANDS.has(command)) {
+    if (!opts.outDir) usageError(`\`splice lync ${command}\` requires --out-dir`);
+  } else if (!opts.out) {
+    usageError(`\`splice lync ${command}\` requires --out`);
+  }
   if (opts.markedAt !== undefined && !isRfc3339(opts.markedAt)) {
     usageError(`--marked-at must be RFC 3339 (got "${opts.markedAt}")`);
   }
@@ -278,6 +407,100 @@ async function writeAndVerify(
   }
   logger("info", `Verified ${outPath}: ${verify.counts.accepted} line(s) accepted`);
   return verify;
+}
+
+/**
+ * Re-open a written `.loom.json` the way textile does: re-read the bytes, confirm
+ * `loom.meta.profile` is "conversation", and IMPORT the snapshot back through the
+ * real @deepfates/lync Looms API (`looms.import` — the same call textile's
+ * `importConversationLoom` makes) to prove it folds. Turn counts must reconcile
+ * with the reported stats. Any mismatch is collected and returned loudly; the
+ * caller throws when `ok` is false, so a broken snapshot is never a silent pass.
+ */
+async function verifyLoomSnapshotFile(
+  outPath: string,
+  expectedTurns: number,
+): Promise<LoomVerifyResult> {
+  const problems: string[] = [];
+  const raw = await fs.readFile(outPath, "utf8");
+  let snapshot: LoomSnapshot<
+    unknown,
+    { profile?: unknown } | undefined,
+    unknown
+  >;
+  try {
+    snapshot = JSON.parse(raw);
+  } catch (err) {
+    return {
+      outputPath: outPath,
+      ok: false,
+      profile: null,
+      turns: -1,
+      problems: [
+        `snapshot is not valid JSON: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      ],
+    };
+  }
+
+  const profileRaw = snapshot.loom?.meta?.profile;
+  const profile = typeof profileRaw === "string" ? profileRaw : null;
+  if (profile !== "conversation") {
+    problems.push(
+      `loom.meta.profile is ${JSON.stringify(profileRaw)}, expected "conversation"`,
+    );
+  }
+  const turns = Array.isArray(snapshot.turns) ? snapshot.turns.length : -1;
+  if (turns !== expectedTurns) {
+    problems.push(
+      `written snapshot has ${turns} turn(s), stats reported ${expectedTurns}`,
+    );
+  }
+
+  // Round-trip through the real Looms API — the exact import textile performs.
+  const store = createMemoryEventStore();
+  const looms = createLyncLooms({
+    store,
+    author: { actor: DEFAULT_OPERATOR, operator: DEFAULT_OPERATOR },
+  });
+  const info = await looms.import(snapshot);
+  const loom = await looms.open(info.id);
+  const reexported = await loom.export();
+  loom.close();
+  if (reexported.turns.length !== turns) {
+    problems.push(
+      `re-import folded ${reexported.turns.length} turn(s), expected ${turns}`,
+    );
+  }
+
+  return { outputPath: outPath, ok: problems.length === 0, profile, turns, problems };
+}
+
+/** Verify every written loom file; throw loudly listing all that failed. */
+async function verifyLoomFiles(
+  files: { outputPath: string; turns: number }[],
+  logger: Logger,
+): Promise<LoomVerifyResult[]> {
+  const results: LoomVerifyResult[] = [];
+  for (const file of files) {
+    // eslint-disable-next-line no-await-in-loop
+    const result = await verifyLoomSnapshotFile(file.outputPath, file.turns);
+    results.push(result);
+  }
+  const failed = results.filter((r) => !r.ok);
+  if (failed.length > 0) {
+    throw new Error(
+      `loom verify failed for ${failed.length} file(s): ${JSON.stringify(failed)}`,
+    );
+  }
+  for (const r of results) {
+    logger(
+      "info",
+      `Verified ${r.outputPath}: profile=${r.profile}, ${r.turns} turn(s)`,
+    );
+  }
+  return results;
 }
 
 /* -------------------------------- Commands --------------------------------- */
@@ -498,6 +721,178 @@ async function runTweetEmbed(
   return report;
 }
 
+/* ----------------------------- Loom commands ------------------------------- */
+
+async function runSessionLoom(
+  opts: LyncCliOptions,
+  logger: Logger,
+): Promise<LoomCliReport> {
+  const source = path.resolve(opts.source as string);
+  const out = path.resolve(opts.out as string);
+
+  const report: LoomCliReport = {
+    command: "lync session-loom",
+    source,
+    out,
+    dryRun: opts.dryRun,
+    outputs: [],
+    stats: undefined,
+  };
+
+  if (opts.dryRun) {
+    // Map through the in-memory builder for stats without writing anything.
+    logger("info", `Reading Claude session ${source}`);
+    const text = await fs.readFile(source, "utf8");
+    const { stats } = await claudeSessionToLoom(text, path.basename(source), {
+      sourceRef: opts.sourceRef ?? source,
+      operator: opts.operator,
+      userActor: opts.userActor,
+      title: opts.title,
+    });
+    report.stats = stats;
+    logger("info", `(dry-run) would write 1 loom (${stats.turns} turn(s)) to ${out}`);
+    return report;
+  }
+
+  logger("info", `Converting Claude session ${source} → ${out}`);
+  // The `.lync` writers mkdir their parent; the session-loom writer targets a
+  // single file, so ensure its directory exists here (the export writers mkdir
+  // their own --out-dir).
+  await fs.mkdir(path.dirname(out), { recursive: true });
+  const { outputPath, stats } = await convertClaudeSessionToLoomFile(source, out, {
+    sourceRef: opts.sourceRef ?? source,
+    operator: opts.operator,
+    userActor: opts.userActor,
+    title: opts.title,
+  });
+  logger("info", `Wrote loom (${stats.turns} turn(s)) to ${outputPath}`);
+  report.stats = stats;
+  report.outputs = [{ outputPath, turns: stats.turns }];
+  report.verify = await verifyLoomFiles(
+    [{ outputPath, turns: (stats as SessionLoomStats).turns }],
+    logger,
+  );
+  return report;
+}
+
+async function runClaudeAiExport(
+  opts: LyncCliOptions,
+  logger: Logger,
+): Promise<LoomCliReport> {
+  const source = path.resolve(opts.source as string);
+  const outDir = path.resolve(opts.outDir as string);
+
+  const report: LoomCliReport = {
+    command: "lync claudeai-export",
+    source,
+    outDir,
+    dryRun: opts.dryRun,
+    outputs: [],
+    stats: undefined,
+  };
+
+  const exportOpts = {
+    sourceRef: opts.sourceRef ?? source,
+    operator: opts.operator,
+    userActor: opts.userActor,
+    assistantActor: opts.assistantActor,
+  };
+
+  if (opts.dryRun) {
+    logger("info", `Reading Claude.ai export ${source}`);
+    const text = await fs.readFile(source, "utf8");
+    const { stats } = await claudeAiExportToLooms(text, exportOpts);
+    report.stats = stats;
+    logger(
+      "info",
+      `(dry-run) would write ${stats.conversations} loom(s) (${stats.totalTurns} turn(s)) to ${outDir}`,
+    );
+    return report;
+  }
+
+  logger("info", `Converting Claude.ai export ${source} → ${outDir}`);
+  const { outputs, stats } = await convertClaudeAiExportToLoomFiles(
+    source,
+    outDir,
+    exportOpts,
+  );
+  const s = stats as ClaudeAiExportStats;
+  logger(
+    "info",
+    `Wrote ${outputs.length} loom(s) (${s.totalTurns} turn(s), ${s.skippedConversations} conversation(s) skipped) to ${outDir}`,
+  );
+  report.stats = stats;
+  report.outputs = outputs.map((o) => ({
+    outputPath: o.outputPath,
+    conversationUuid: o.stats.conversationUuid,
+    turns: o.stats.turns,
+  }));
+  report.verify = await verifyLoomFiles(
+    outputs.map((o) => ({ outputPath: o.outputPath, turns: o.stats.turns })),
+    logger,
+  );
+  return report;
+}
+
+async function runChatGptExport(
+  opts: LyncCliOptions,
+  logger: Logger,
+): Promise<LoomCliReport> {
+  const source = path.resolve(opts.source as string);
+  const outDir = path.resolve(opts.outDir as string);
+
+  const report: LoomCliReport = {
+    command: "lync chatgpt-export",
+    source,
+    outDir,
+    dryRun: opts.dryRun,
+    outputs: [],
+    stats: undefined,
+  };
+
+  const exportOpts = {
+    sourceRef: opts.sourceRef ?? source,
+    operator: opts.operator,
+    userActor: opts.userActor,
+    assistantActor: opts.assistantActor,
+  };
+
+  if (opts.dryRun) {
+    logger("info", `Reading ChatGPT export ${source}`);
+    const text = await fs.readFile(source, "utf8");
+    const { stats } = await chatGptExportToLooms(text, exportOpts);
+    report.stats = stats;
+    logger(
+      "info",
+      `(dry-run) would write ${stats.conversations} loom(s) (${stats.totalTurns} turn(s)) to ${outDir}`,
+    );
+    return report;
+  }
+
+  logger("info", `Converting ChatGPT export ${source} → ${outDir}`);
+  const { outputs, stats } = await convertChatGptExportToLoomFiles(
+    source,
+    outDir,
+    exportOpts,
+  );
+  const s = stats as ChatGptExportStats;
+  logger(
+    "info",
+    `Wrote ${outputs.length} loom(s) (${s.totalTurns} turn(s), ${s.skippedConversations} conversation(s) skipped) to ${outDir}`,
+  );
+  report.stats = stats;
+  report.outputs = outputs.map((o) => ({
+    outputPath: o.outputPath,
+    conversationId: o.stats.conversationId,
+    turns: o.stats.turns,
+  }));
+  report.verify = await verifyLoomFiles(
+    outputs.map((o) => ({ outputPath: o.outputPath, turns: o.stats.turns })),
+    logger,
+  );
+  return report;
+}
+
 /* ---------------------------------- Main ----------------------------------- */
 
 /**
@@ -535,11 +930,15 @@ export async function runLync(argv: string[]): Promise<never> {
 
   const logger = makeLogger(opts.logLevel);
   try {
-    let report: LyncCliReport;
+    let report: LyncCliReport | LoomCliReport;
     if (command === "archive") report = await runArchive(opts, logger);
     else if (command === "glowfic") report = await runGlowfic(opts, logger);
     else if (command === "ocr") report = await runOcr(opts, logger);
-    else report = await runTweetEmbed(opts, logger);
+    else if (command === "tweet-embed") report = await runTweetEmbed(opts, logger);
+    else if (command === "session-loom") report = await runSessionLoom(opts, logger);
+    else if (command === "claudeai-export")
+      report = await runClaudeAiExport(opts, logger);
+    else report = await runChatGptExport(opts, logger);
 
     // The stats block IS the contract: full counts and reasons to stdout.
     process.stdout.write(JSON.stringify(report, null, 2) + "\n");
