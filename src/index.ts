@@ -50,6 +50,8 @@ export * from "./outputs/lync-claude-session.js";
 export * from "./outputs/lync-codex-session.js";
 // Claude session → a real lync conversation loom (textile-explorer lane)
 export * from "./outputs/lync-session-loom.js";
+// Claude.ai account export (conversations.json) → conversation looms (dee-6nkt)
+export * from "./outputs/lync-claudeai-export.js";
 
 /* ------------------------------- Extensions ------------------------------- */
 
