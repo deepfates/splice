@@ -84,18 +84,30 @@ describe("splice lync CLI", () => {
     it("`splice lync --help` names every command and the stats contract", async () => {
       const { exitCode, stderr } = await runCli(["lync", "--help"]);
       expect(exitCode).toBe(0);
-      for (const cmd of ["archive", "glowfic", "ocr", "tweet-embed"]) {
+      for (const cmd of [
+        "archive",
+        "glowfic",
+        "ocr",
+        "tweet-embed",
+        "session-loom",
+        "claudeai-export",
+        "chatgpt-export",
+      ]) {
         expect(stderr).toContain(cmd);
       }
       for (const flag of [
         "--source",
         "--out",
+        "--out-dir",
         "--operator",
         "--via",
         "--source-ref",
         "--marked-at",
         "--set-locator",
         "--archive-ids-file",
+        "--user-actor",
+        "--assistant-actor",
+        "--title",
         "--dry-run",
       ]) {
         expect(stderr).toContain(flag);
@@ -406,6 +418,233 @@ describe("splice lync CLI", () => {
       await runLyncOk(["tweet-embed", "--source", embedCacheFixture, "--out", outB]);
       const [a, b] = await Promise.all([fs.readFile(outA), fs.readFile(outB)]);
       expect(a.equals(b)).toBe(true);
+    }, 30_000);
+  });
+
+  // Conversation-loom commands write .loom.json snapshots (not .lync), then
+  // re-open each through the real Looms API. Fixtures are SYNTHETIC.
+  describe("lync loom commands (synthetic conversation fixtures)", () => {
+    let loomSrc: string;
+
+    beforeAll(async () => {
+      loomSrc = await fs.mkdtemp(path.join(os.tmpdir(), "splice-lync-loom-"));
+      // Claude Code session: 2 user + 2 assistant, last assistant is tool-only.
+      await fs.writeFile(
+        path.join(loomSrc, "session.jsonl"),
+        [
+          `{"type":"user","uuid":"u1","parentUuid":null,"timestamp":"2026-07-13T00:00:00Z","message":{"role":"user","content":"synthetic greeting"}}`,
+          `{"type":"assistant","uuid":"a1","parentUuid":"u1","timestamp":"2026-07-13T00:00:01Z","message":{"role":"assistant","model":"claude-synthetic","content":[{"type":"text","text":"synthetic reply"}]}}`,
+          `{"type":"user","uuid":"u2","parentUuid":"a1","timestamp":"2026-07-13T00:00:02Z","message":{"role":"user","content":"synthetic follow up"}}`,
+          `{"type":"assistant","uuid":"a2","parentUuid":"u2","timestamp":"2026-07-13T00:00:03Z","message":{"role":"assistant","model":"claude-synthetic","content":[{"type":"tool_use","name":"synth_tool","id":"t1","input":{}}]}}`,
+        ].join("\n") + "\n",
+      );
+      // Claude.ai export: one parent-linked chat, one linkage-less (linear) chat.
+      await fs.writeFile(
+        path.join(loomSrc, "claudeai.json"),
+        JSON.stringify([
+          {
+            uuid: "conv-a",
+            name: "Synthetic chat A",
+            chat_messages: [
+              { uuid: "m1", sender: "human", text: "synthetic human A" },
+              {
+                uuid: "m2",
+                parent_message_uuid: "m1",
+                sender: "assistant",
+                model: "claude-synthetic",
+                text: "synthetic assistant A",
+              },
+            ],
+          },
+          {
+            uuid: "conv-b",
+            name: "Synthetic chat B",
+            chat_messages: [
+              { uuid: "n1", sender: "human", text: "synthetic human B" },
+              { uuid: "n2", sender: "assistant", text: "synthetic assistant B" },
+            ],
+          },
+        ]),
+      );
+      // ChatGPT export: a mapping graph with a message-less root placeholder.
+      await fs.writeFile(
+        path.join(loomSrc, "chatgpt.json"),
+        JSON.stringify([
+          {
+            conversation_id: "cg-1",
+            title: "Synthetic ChatGPT chat",
+            mapping: {
+              root: { id: "root", parent: null, children: ["c1"], message: null },
+              c1: {
+                id: "c1",
+                parent: "root",
+                children: ["c2"],
+                message: {
+                  id: "c1",
+                  author: { role: "user" },
+                  content: { content_type: "text", parts: ["synthetic prompt"] },
+                  create_time: 1760000000,
+                },
+              },
+              c2: {
+                id: "c2",
+                parent: "c1",
+                children: [],
+                message: {
+                  id: "c2",
+                  author: { role: "assistant" },
+                  metadata: { model_slug: "gpt-synthetic" },
+                  content: { content_type: "text", parts: ["synthetic answer"] },
+                  create_time: 1760000001,
+                },
+              },
+            },
+          },
+        ]),
+      );
+    });
+
+    afterAll(async () => {
+      if (loomSrc && loomSrc.startsWith(os.tmpdir())) {
+        await fs.rm(loomSrc, { recursive: true, force: true }).catch(() => {});
+      }
+    });
+
+    /** A written .loom.json opens as a conversation-profile snapshot. */
+    async function readSnapshot(p: string) {
+      return JSON.parse(await fs.readFile(p, "utf8"));
+    }
+
+    it("session-loom: one conversation loom, verified openable", async () => {
+      const out = path.join(outDir, "session.loom.json");
+      const report = await runLyncOk([
+        "session-loom",
+        "--source",
+        path.join(loomSrc, "session.jsonl"),
+        "--out",
+        out,
+        "--title",
+        "Synthetic Session",
+      ]);
+
+      expect(report.command).toBe("lync session-loom");
+      expect(report.stats.turns).toBe(4);
+      expect(report.stats.nonTurnEvents).toEqual({});
+      // full line-level accounting carried through, nothing dropped
+      expect(report.stats.session.skipped).toEqual([]);
+      expect(report.stats.session.emitted).toBe(4);
+      expect(report.verify).toHaveLength(1);
+      expect(report.verify[0].ok).toBe(true);
+      expect(report.verify[0].profile).toBe("conversation");
+      expect(report.verify[0].turns).toBe(4);
+
+      const snapshot = await readSnapshot(out);
+      expect(snapshot.loom.meta.profile).toBe("conversation");
+      expect(snapshot.loom.meta.source).toBe("claude-session");
+      expect(snapshot.loom.meta.title).toBe("Synthetic Session");
+      expect(snapshot.turns).toHaveLength(4);
+    }, 30_000);
+
+    it("session-loom --dry-run reports stats and writes nothing", async () => {
+      const out = path.join(outDir, "session-dry.loom.json");
+      const report = await runLyncOk([
+        "session-loom",
+        "--source",
+        path.join(loomSrc, "session.jsonl"),
+        "--out",
+        out,
+        "--dry-run",
+      ]);
+      expect(report.dryRun).toBe(true);
+      expect(report.stats.turns).toBe(4);
+      expect(report.outputs).toEqual([]);
+      expect(report.verify).toBeUndefined();
+      expect(fssync.existsSync(out)).toBe(false);
+    }, 30_000);
+
+    it("claudeai-export: one loom per chat, both linkage modes surfaced", async () => {
+      const dir = path.join(outDir, "claudeai");
+      const report = await runLyncOk([
+        "claudeai-export",
+        "--source",
+        path.join(loomSrc, "claudeai.json"),
+        "--out-dir",
+        dir,
+      ]);
+
+      expect(report.command).toBe("lync claudeai-export");
+      expect(report.stats.conversations).toBe(2);
+      expect(report.stats.skippedConversations).toBe(0);
+      expect(report.stats.totalTurns).toBe(4);
+      expect(report.stats.perConversation.map((c: any) => c.linkage)).toEqual([
+        "parent",
+        "linear",
+      ]);
+      expect(report.outputs).toHaveLength(2);
+      expect(report.verify).toHaveLength(2);
+      for (const v of report.verify) {
+        expect(v.ok).toBe(true);
+        expect(v.profile).toBe("conversation");
+      }
+      for (const o of report.outputs) {
+        const snapshot = await readSnapshot(o.outputPath);
+        expect(snapshot.loom.meta.profile).toBe("conversation");
+        expect(snapshot.loom.meta.source).toBe("claudeai-export");
+      }
+    }, 30_000);
+
+    it("chatgpt-export: mapping graph → loom, placeholder counted not dropped", async () => {
+      const dir = path.join(outDir, "chatgpt");
+      const report = await runLyncOk([
+        "chatgpt-export",
+        "--source",
+        path.join(loomSrc, "chatgpt.json"),
+        "--out-dir",
+        dir,
+      ]);
+
+      expect(report.command).toBe("lync chatgpt-export");
+      expect(report.stats.conversations).toBe(1);
+      expect(report.stats.totalTurns).toBe(2);
+      // the message-less root node is a counted placeholder, never a silent drop
+      expect(report.stats.totalPlaceholderNodes).toBe(1);
+      expect(report.stats.totalMalformedNodes).toBe(0);
+      expect(report.outputs).toHaveLength(1);
+      expect(report.verify[0].ok).toBe(true);
+      expect(report.verify[0].profile).toBe("conversation");
+
+      const snapshot = await readSnapshot(report.outputs[0].outputPath);
+      expect(snapshot.loom.meta.profile).toBe("conversation");
+      expect(snapshot.loom.meta.source).toBe("chatgpt-export");
+      expect(snapshot.turns).toHaveLength(2);
+    }, 30_000);
+
+    it("loom commands reject flags they do not wire (no silent drops)", async () => {
+      // --via/--marked-at/--actor are not accepted on loom commands.
+      const badVia = await runCli([
+        "lync",
+        "session-loom",
+        "--source",
+        path.join(loomSrc, "session.jsonl"),
+        "--out",
+        path.join(outDir, "never.loom.json"),
+        "--via",
+        "x@1",
+      ]);
+      expect(badVia.exitCode).toBe(2);
+      expect(badVia.stderr).toContain(
+        "Unknown flag --via for `splice lync session-loom`",
+      );
+
+      // export commands require --out-dir, not --out
+      const missingDir = await runCli([
+        "lync",
+        "claudeai-export",
+        "--source",
+        path.join(loomSrc, "claudeai.json"),
+      ]);
+      expect(missingDir.exitCode).toBe(2);
+      expect(missingDir.stderr).toContain("requires --out-dir");
     }, 30_000);
   });
 
