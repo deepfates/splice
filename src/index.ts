@@ -52,6 +52,8 @@ export * from "./outputs/lync-codex-session.js";
 export * from "./outputs/lync-session-loom.js";
 // Claude.ai account export (conversations.json) → conversation looms (dee-6nkt)
 export * from "./outputs/lync-claudeai-export.js";
+// ChatGPT account export (conversations.json mapping graph) → conversation looms (dee-do4a)
+export * from "./outputs/lync-chatgpt-export.js";
 
 /* ------------------------------- Extensions ------------------------------- */
 
