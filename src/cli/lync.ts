@@ -67,6 +67,11 @@ import {
   convertChatGptExportToLoomFiles,
   type ChatGptExportStats,
 } from "../outputs/lync-chatgpt-export.js";
+import {
+  twitterArchiveToLooms,
+  convertTwitterArchiveToLoomFiles,
+  type TwitterThreadsStats,
+} from "../outputs/lync-twitter-threads.js";
 
 /* --------------------------------- Types ---------------------------------- */
 
@@ -78,6 +83,7 @@ const LYNC_COMMANDS = [
   "session-loom",
   "claudeai-export",
   "chatgpt-export",
+  "twitter-threads",
 ] as const;
 type LyncCommand = (typeof LYNC_COMMANDS)[number];
 
@@ -85,6 +91,7 @@ type LyncCommand = (typeof LYNC_COMMANDS)[number];
 const DIR_OUTPUT_COMMANDS = new Set<LyncCommand>([
   "claudeai-export",
   "chatgpt-export",
+  "twitter-threads",
 ]);
 
 interface LyncCliOptions {
@@ -103,6 +110,7 @@ interface LyncCliOptions {
   archiveIdsFile?: string;
   userActor?: string;
   assistantActor?: string;
+  ownerHandle?: string;
   title?: string;
 }
 
@@ -163,6 +171,7 @@ export function lyncUsage(): string {
     "  splice lync session-loom     --source <session.jsonl> --out <file.loom.json>",
     "  splice lync claudeai-export  --source <conversations.json> --out-dir <dir>",
     "  splice lync chatgpt-export   --source <conversations.json> --out-dir <dir>",
+    "  splice lync twitter-threads  --source <archive-dir-or-tweets.js> --out-dir <dir>",
     "",
     "Commands:",
     "  archive          Twitter archive directory or Bluesky .car file → .lync",
@@ -172,6 +181,7 @@ export function lyncUsage(): string {
     "  session-loom     Claude Code session (.jsonl) → one conversation .loom.json textile opens",
     "  claudeai-export  Claude.ai export (conversations.json) → one .loom.json per chat",
     "  chatgpt-export   ChatGPT export (conversations.json) → one .loom.json per chat",
+    "  twitter-threads  Twitter/X archive (dir or tweets.js) → one .loom.json per reply-thread",
     "",
     "Options:",
     "  --source <path>            Input path (directory or file, per command)",
@@ -190,6 +200,8 @@ export function lyncUsage(): string {
     "  --user-actor <name>        Actor stamped on human turns (loom commands; default: deepfates)",
     "  --assistant-actor <name>   Fallback actor for assistant turns with no model id",
     "                             (claudeai/chatgpt export; default: assistant)",
+    "  --owner-handle <name>      The archive owner's screen name (twitter-threads; default:",
+    "                             read from account.js, else a sentinel — all tweets = owner)",
     "  --title <text>             Human title stamped into the loom meta (session-loom)",
     "  --dry-run, -n              Map and report stats; don't write any output file",
     "  --log-level <level>        debug|info|warn|error (default: info)",
@@ -214,6 +226,7 @@ export function lyncUsage(): string {
     "  splice lync session-loom --source ~/.claude/projects/<id>/<sessionId>.jsonl --out ./out/session.loom.json",
     "  splice lync claudeai-export --source ~/Downloads/conversations.json --out-dir ./out/claudeai-looms",
     "  splice lync chatgpt-export --source ~/Downloads/conversations.json --out-dir ./out/chatgpt-looms",
+    "  splice lync twitter-threads --source ~/Downloads/my-twitter-archive --out-dir ./out/twitter-looms",
     "",
     "Docs: https://github.com/deepfates/splice • lync format: lync FORMAT.md",
   ].join("\n");
@@ -277,6 +290,13 @@ const COMMAND_FLAGS: Record<LyncCommand, Set<string>> = {
     "--user-actor",
     "--assistant-actor",
   ]),
+  "twitter-threads": new Set([
+    "--out-dir",
+    "--operator",
+    "--source-ref",
+    "--user-actor",
+    "--owner-handle",
+  ]),
 };
 
 function parseLyncArgs(
@@ -319,6 +339,8 @@ function parseLyncArgs(
       opts.userActor = takeValue(a, i++);
     } else if (a === "--assistant-actor") {
       opts.assistantActor = takeValue(a, i++);
+    } else if (a === "--owner-handle") {
+      opts.ownerHandle = takeValue(a, i++);
     } else if (a === "--title") {
       opts.title = takeValue(a, i++);
     } else if (a === "--operator") {
@@ -893,6 +915,65 @@ async function runChatGptExport(
   return report;
 }
 
+async function runTwitterThreads(
+  opts: LyncCliOptions,
+  logger: Logger,
+): Promise<LoomCliReport> {
+  const source = path.resolve(opts.source as string);
+  const outDir = path.resolve(opts.outDir as string);
+
+  const report: LoomCliReport = {
+    command: "lync twitter-threads",
+    source,
+    outDir,
+    dryRun: opts.dryRun,
+    outputs: [],
+    stats: undefined,
+  };
+
+  const exportOpts = {
+    sourceRef: opts.sourceRef ?? source,
+    operator: opts.operator,
+    userActor: opts.userActor,
+    ownerHandle: opts.ownerHandle,
+  };
+
+  if (opts.dryRun) {
+    logger("info", `Reading Twitter archive ${source}`);
+    const { stats } = await twitterArchiveToLooms(source, logger, exportOpts);
+    report.stats = stats;
+    logger(
+      "info",
+      `(dry-run) would write ${stats.threads} loom(s) (${stats.totalTurns} turn(s)) to ${outDir}`,
+    );
+    return report;
+  }
+
+  logger("info", `Converting Twitter archive ${source} → ${outDir}`);
+  const { outputs, stats } = await convertTwitterArchiveToLoomFiles(
+    source,
+    outDir,
+    logger,
+    exportOpts,
+  );
+  const s = stats as TwitterThreadsStats;
+  logger(
+    "info",
+    `Wrote ${outputs.length} loom(s) (${s.totalTurns} turn(s); ${s.retweets} retweet(s), ${s.likes} like(s), ${s.malformed} malformed counted) to ${outDir}`,
+  );
+  report.stats = stats;
+  report.outputs = outputs.map((o) => ({
+    outputPath: o.outputPath,
+    threadId: o.stats.threadId,
+    turns: o.stats.turns,
+  }));
+  report.verify = await verifyLoomFiles(
+    outputs.map((o) => ({ outputPath: o.outputPath, turns: o.stats.turns })),
+    logger,
+  );
+  return report;
+}
+
 /* ---------------------------------- Main ----------------------------------- */
 
 /**
@@ -938,7 +1019,9 @@ export async function runLync(argv: string[]): Promise<never> {
     else if (command === "session-loom") report = await runSessionLoom(opts, logger);
     else if (command === "claudeai-export")
       report = await runClaudeAiExport(opts, logger);
-    else report = await runChatGptExport(opts, logger);
+    else if (command === "chatgpt-export")
+      report = await runChatGptExport(opts, logger);
+    else report = await runTwitterThreads(opts, logger);
 
     // The stats block IS the contract: full counts and reasons to stdout.
     process.stdout.write(JSON.stringify(report, null, 2) + "\n");
