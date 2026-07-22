@@ -12,6 +12,7 @@ import {
   convertCodexSessionTreeToLync,
 } from "../../src/outputs/lync-codex-session.js";
 import { verifyLyncFile } from "../../src/outputs/lync.js";
+import { sessionTreeIdentityLocator } from "../../src/outputs/lync-session-batch.js";
 
 /* ----------------------------- Synthetic fixture ---------------------------
  * Authored from the codex rollout JSONL shape (see module doc of
@@ -299,6 +300,13 @@ describe("codex session tree batch: zero silent drops at the file level", () => 
         fs.readFile(b.files[0].outputPath),
       ]);
       expect(bytesA.equals(bytesB)).toBe(true);
+      const first = JSON.parse(bytesA.toString("utf8").split("\n")[0]);
+      expect(first.id).toBe(
+        codexLineEventId(
+          sessionTreeIdentityLocator(path.join("2026", "01", LOCATOR)),
+          1,
+        ),
+      );
     } finally {
       for (const d of [rootA, rootB, outA, outB]) {
         await fs.rm(d, { recursive: true, force: true });

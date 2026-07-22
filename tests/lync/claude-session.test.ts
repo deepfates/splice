@@ -12,6 +12,10 @@ import {
   convertClaudeSessionTreeToLync,
 } from "../../src/outputs/lync-claude-session.js";
 import { verifyLyncFile } from "../../src/outputs/lync.js";
+import {
+  SESSION_TREE_IMPORT_SCHEMA,
+  sessionTreeIdentityLocator,
+} from "../../src/outputs/lync-session-batch.js";
 
 /* ----------------------------- Synthetic fixture ---------------------------
  * Authored from the Claude Code session JSONL shape (see module doc of
@@ -231,6 +235,49 @@ describe("claude session JSONL → lync mapping", () => {
     }
   });
 
+  it("successfully replaces the same generated output on a repeat run", async () => {
+    const dir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "splice-claude-repeat-"),
+    );
+    try {
+      const input = path.join(dir, LOCATOR);
+      const output = path.join(dir, "session.lync");
+      await fs.writeFile(input, FIXTURE);
+      await convertClaudeSessionToLync(input, output, { sourceRef: LOCATOR });
+      const first = await fs.readFile(output);
+      await convertClaudeSessionToLync(input, output, { sourceRef: LOCATOR });
+      expect((await fs.readFile(output)).equals(first)).toBe(true);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "does not chmod an existing parent in single-file mode",
+    async () => {
+      const dir = await fs.mkdtemp(
+        path.join(os.tmpdir(), "splice-claude-parent-"),
+      );
+      try {
+        const input = path.join(dir, LOCATOR);
+        const ownedByCaller = path.join(dir, "caller-owned");
+        const createdByImporter = path.join(ownedByCaller, "private-child");
+        await fs.writeFile(input, FIXTURE);
+        await fs.mkdir(ownedByCaller);
+        await fs.chmod(ownedByCaller, 0o755);
+        const output = path.join(createdByImporter, "session.lync");
+
+        await convertClaudeSessionToLync(input, output);
+
+        expect((await fs.stat(ownedByCaller)).mode & 0o777).toBe(0o755);
+        expect((await fs.stat(createdByImporter)).mode & 0o777).toBe(0o700);
+        expect((await fs.stat(output)).mode & 0o777).toBe(0o600);
+      } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("end-to-end: written file is 100% accepted by @deepfates/lync", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "splice-claude-"));
     try {
@@ -280,9 +327,33 @@ describe("claude session tree batch: zero silent drops at the file level", () =>
           JSON.parse((await fs.readFile(outputPath, "utf8")).trim()),
         ),
       );
+      expect(SESSION_TREE_IMPORT_SCHEMA).toBe("splice-session-tree/v1");
+      expect(a.id).toBe(
+        claudeLineEventId(
+          sessionTreeIdentityLocator("workflow-a/journal.jsonl"),
+          1,
+        ),
+      );
       expect(a.id).not.toBe(b.id);
       expect(a.author.source).toBe("workflow-a/journal.jsonl:1");
       expect(b.author.source).toBe("workflow-b/journal.jsonl:1");
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+      await fs.rm(outDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not misclassify destination failures as unreadable inputs", async () => {
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "splice-claude-source-"),
+    );
+    const outDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "splice-claude-dest-"),
+    );
+    try {
+      await fs.writeFile(path.join(root, "collision.jsonl"), FIXTURE);
+      await fs.mkdir(path.join(outDir, "collision.lync"));
+      await expect(convertClaudeSessionTreeToLync(root, outDir)).rejects.toThrow();
     } finally {
       await fs.rm(root, { recursive: true, force: true });
       await fs.rm(outDir, { recursive: true, force: true });

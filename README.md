@@ -222,6 +222,30 @@ Exit codes match the main CLI: 0 success, 1 runtime/verify error, 2 usage
 error. Future exporters (lync → training data, lync → markdown, session
 imports) will land as sibling subcommands here.
 
+### Agent-session importer identity and cutover
+
+The Codex and Claude Code tree importers use the explicit deterministic-id
+schema `splice-session-tree/v1`. A source file's identity is its normalized,
+root-relative path under the selected archive root, prefixed by that schema;
+the physical location of the copied archive is not identity. Human-readable
+`author.source` and payload paths remain root-relative. A breaking locator or
+id change must introduce a new schema value rather than silently reusing v1.
+
+The earlier basename-only tree-import behavior never produced importer output
+found in the v1-cutover audit of this workstation's home directory (excluding
+macOS's system-managed `Library` tree): no `.lync` event was attributed to
+`splice/codex-session` or `splice/claude-session`. It is therefore treated as
+disposable pre-release output, not a migration source. If such generated files
+exist elsewhere, delete them and regenerate from the original JSONL archive
+with v1; do not union basename-era files with v1 output because their derived
+ids belong to a different, unversioned identity scheme.
+
+Session output files are mode 0600 and importer-created directories are 0700
+on POSIX. Windows does not expose equivalent POSIX mode guarantees. Repeated
+conversion replaces the generated file on every platform; replacement is
+atomic on POSIX, while Windows may briefly remove the old destination before
+renaming the verified staged file into place.
+
 ## Sources
 
 ### Twitter/X

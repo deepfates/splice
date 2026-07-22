@@ -329,11 +329,82 @@ export type SessionMapperFactory = (
 const PRIVATE_DIRECTORY_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
 
+/**
+ * Identity contract for deterministic ids produced by session-tree imports.
+ * A future incompatible locator/id change must bump this value and document
+ * how generated outputs cross the boundary.
+ */
+export const SESSION_TREE_IMPORT_SCHEMA = "splice-session-tree/v1";
+
+/** Versioned deterministic-id input; source references remain root-relative. */
+export function sessionTreeIdentityLocator(relativePath: string): string {
+  return `${SESSION_TREE_IMPORT_SCHEMA}:${sessionLogicalLocator(relativePath)}`;
+}
+
 async function ensurePrivateDirectory(dir: string): Promise<void> {
   await fs.mkdir(dir, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
   // mkdir's mode is filtered by umask and does not affect an existing path.
   // Trace destinations are private by contract, so enforce the final mode.
   await fs.chmod(dir, PRIVATE_DIRECTORY_MODE);
+}
+
+/**
+ * Create missing parents privately without changing permissions on any
+ * directory supplied by the caller. This is the single-file conversion
+ * contract: the output file is ours; an existing parent is not.
+ */
+async function createMissingPrivateDirectories(dir: string): Promise<void> {
+  const missing: string[] = [];
+  let current = path.resolve(dir);
+  for (;;) {
+    try {
+      const stat = await fs.stat(current);
+      if (!stat.isDirectory()) {
+        throw new Error(`session output parent is not a directory: ${current}`);
+      }
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") throw err;
+      missing.push(current);
+      const parent = path.dirname(current);
+      if (parent === current) throw err;
+      current = parent;
+    }
+  }
+  for (const next of missing.reverse()) {
+    try {
+      await fs.mkdir(next, { mode: PRIVATE_DIRECTORY_MODE });
+      // mkdir is filtered by umask. Enforce exact privacy only for the path
+      // this call actually created, never for a raced/existing directory.
+      await fs.chmod(next, PRIVATE_DIRECTORY_MODE);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code !== "EEXIST") throw err;
+      const stat = await fs.stat(next);
+      if (!stat.isDirectory()) throw err;
+    }
+  }
+}
+
+async function replaceGeneratedFile(
+  stagedPath: string,
+  destinationPath: string,
+): Promise<void> {
+  try {
+    await fs.rename(stagedPath, destinationPath);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (
+      process.platform !== "win32" ||
+      (code !== "EEXIST" && code !== "EPERM")
+    ) {
+      throw err;
+    }
+    // Windows cannot consistently rename over an existing file. Preserve
+    // repeatability there with a remove-then-rename fallback; POSIX retains
+    // atomic replacement and never takes this branch.
+    await fs.rm(destinationPath, { force: true });
+    await fs.rename(stagedPath, destinationPath);
+  }
 }
 
 async function ensurePrivateDirectoryTree(
@@ -359,6 +430,18 @@ async function ensurePrivateDirectoryTree(
 export interface SessionUnreadableFile {
   file: string;
   reason: string;
+}
+
+/** Positively attributable failure while opening or reading a source file. */
+export class SessionInputReadError extends Error {
+  readonly code?: string;
+
+  constructor(inputPath: string, cause: unknown) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    super(`cannot read session input ${inputPath}: ${detail}`, { cause });
+    this.name = "SessionInputReadError";
+    this.code = (cause as NodeJS.ErrnoException)?.code;
+  }
 }
 
 export interface SessionTreeFileReport {
@@ -412,37 +495,59 @@ async function streamSessionFile(
   outputPath: string,
   mapper: SessionLineMapper,
 ): Promise<void> {
-  const output = createWriteStream(outputPath, {
-    encoding: "utf8",
-    flags: "wx",
-    mode: PRIVATE_FILE_MODE,
-  });
-  let input: ReturnType<typeof createReadStream> | undefined;
-  try {
-    await once(output, "open");
-    // Attach readline's error handling immediately after opening the input.
-    // Creating the input before awaiting the output can let an EACCES event
-    // escape unobserved during that await.
-    input = createReadStream(inputPath, { encoding: "utf8" });
-    const rl = readline.createInterface({ input, crlfDelay: Infinity });
-    let lineNo = 0;
-    for await (const line of rl) {
-      lineNo++;
-      for (const ev of mapper.mapLine(line, lineNo)) {
-        if (!output.write(`${serializeLyncEvent(ev)}\n`)) {
-          await once(output, "drain");
-        }
-      }
-    }
-    await new Promise<void>((resolve, reject) => {
-      output.end((err?: Error | null) => (err ? reject(err) : resolve()));
+  await new Promise<void>((resolve, reject) => {
+    const output = createWriteStream(outputPath, {
+      encoding: "utf8",
+      flags: "wx",
+      mode: PRIVATE_FILE_MODE,
     });
-  } catch (err) {
-    output.destroy();
-    throw err;
-  } finally {
-    input?.destroy();
-  }
+    let input: ReturnType<typeof createReadStream> | undefined;
+    let rl: readline.Interface | undefined;
+    let settled = false;
+
+    const finish = (err?: unknown): void => {
+      if (settled) return;
+      settled = true;
+      rl?.close();
+      input?.destroy();
+      if (err !== undefined) {
+        output.destroy();
+        reject(err);
+      } else {
+        resolve();
+      }
+    };
+
+    // Output errors retain their original type: callers must never classify
+    // create/write/chmod/rename failures as unreadable inputs.
+    output.once("error", finish);
+    output.once("open", () => {
+      input = createReadStream(inputPath, { encoding: "utf8" });
+      input.once("error", (err) =>
+        finish(new SessionInputReadError(inputPath, err)),
+      );
+      rl = readline.createInterface({ input, crlfDelay: Infinity });
+      // readline forwards input failures on its own emitter as well. Handle
+      // that channel explicitly so a source EACCES/EIO cannot escape later as
+      // an uncaught exception after the batch has accounted for the file.
+      rl.once("error", (err) =>
+        finish(new SessionInputReadError(inputPath, err)),
+      );
+      void (async () => {
+        let lineNo = 0;
+        for await (const line of rl!) {
+          lineNo++;
+          for (const ev of mapper.mapLine(line, lineNo)) {
+            if (!output.write(`${serializeLyncEvent(ev)}\n`)) {
+              await once(output, "drain");
+            }
+          }
+        }
+        if (settled) return;
+        output.end(() => finish());
+      })().catch(finish);
+    });
+  });
 }
 
 export interface SessionFileLyncConversion<
@@ -467,7 +572,7 @@ export async function convertSessionFileToLync<
 ): Promise<SessionFileLyncConversion<TStats>> {
   const resolvedOutput = path.resolve(outputPath);
   const outputDir = path.dirname(resolvedOutput);
-  await ensurePrivateDirectory(outputDir);
+  await createMissingPrivateDirectories(outputDir);
   const tempPath = path.join(
     outputDir,
     `.${path.basename(resolvedOutput)}.${process.pid}.${randomUUID()}.tmp`,
@@ -486,8 +591,7 @@ export async function convertSessionFileToLync<
         `lync verify count mismatch for ${outputPath}: wrote ${stats.emitted}, accepted ${verify.counts.accepted}`,
       );
     }
-    await fs.rename(tempPath, resolvedOutput);
-    await fs.chmod(resolvedOutput, PRIVATE_FILE_MODE);
+    await replaceGeneratedFile(tempPath, resolvedOutput);
     return { outputPath, stats, verify };
   } catch (err) {
     await fs.rm(tempPath, { force: true }).catch(() => {});
@@ -523,6 +627,7 @@ export async function convertSessionTreeToLync(
     const inputPath = path.join(inputDir, rel);
     const outputPath = path.join(outputDir, rel.replace(/\.jsonl$/, ".lync"));
     const sessionLocator = locatorByFile.get(rel)!;
+    const identityLocator = sessionTreeIdentityLocator(sessionLocator);
     let converted: SessionFileLyncConversion;
     try {
       // Readability is probed by the stream itself: an unreadable file fails
@@ -532,18 +637,10 @@ export async function convertSessionTreeToLync(
       converted = await convertSessionFileToLync(
         inputPath,
         outputPath,
-        mapperFor(sessionLocator, sessionLocator),
+        mapperFor(identityLocator, sessionLocator),
       );
     } catch (err) {
-      const code = (err as NodeJS.ErrnoException)?.code;
-      if (
-        code === "EACCES" ||
-        code === "EPERM" ||
-        code === "ENOENT" ||
-        code === "EISDIR" ||
-        code === "EMFILE" ||
-        code === "EIO"
-      ) {
+      if (err instanceof SessionInputReadError) {
         filesUnreadable.push({
           file: rel,
           reason: err instanceof Error ? err.message : String(err),
