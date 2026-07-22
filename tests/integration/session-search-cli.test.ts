@@ -7,6 +7,7 @@ import { execa } from "execa";
 
 import { codexSessionToLyncEvents } from "../../src/outputs/lync-codex-session.js";
 import { writeLyncFile } from "../../src/outputs/lync.js";
+import { rebuildSessionSearchIndex } from "../../src/outputs/lync-session-search.js";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const tsx = path.join(projectRoot, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
@@ -59,4 +60,36 @@ describe("splice session-search CLI", () => {
       await fs.rm(tmp, { recursive: true, force: true });
     }
   });
+
+  it("drains a 10,000-hit JSON response before exiting", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "splice-search-cli-large-"));
+    try {
+      const archive = path.join(tmp, "lync");
+      const projection = path.join(tmp, "search");
+      const source = "codex/large.jsonl";
+      const lines: unknown[] = [
+        { timestamp: "2026-01-01T00:00:00.000Z", type: "session_meta", payload: { id: SESSION_ID } },
+      ];
+      for (let i = 0; i < 10_000; i++) {
+        lines.push({
+          timestamp: "2026-01-01T00:00:01.000Z",
+          type: "event_msg",
+          payload: { type: "user_message", message: `large-output-needle-${String(i).padStart(5, "0")}` },
+        });
+      }
+      const input = lines.map(JSON.stringify).join("\n") + "\n";
+      await writeLyncFile(path.join(archive, "large.lync"), codexSessionToLyncEvents(input, source).events);
+      await rebuildSessionSearchIndex(archive, projection);
+      const found = await execa(tsx, [
+        cli, "session-search", "find", "--index", projection,
+        "--query", "large-output-needle", "--limit", "10000",
+      ], { reject: false, maxBuffer: 50 * 1024 * 1024 });
+      expect(found.exitCode).toBe(0);
+      const report = JSON.parse(found.stdout);
+      expect(report.count).toBe(10_000);
+      expect(report.hits.at(-1).text).toBe("large-output-needle-09999");
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

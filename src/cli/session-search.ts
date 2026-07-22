@@ -75,20 +75,24 @@ export async function runSessionSearch(argv: string[]): Promise<never> {
         path.resolve(opts.out as string),
         { sqliteBinary: process.env.SPLICE_SQLITE3 },
       );
-      process.stdout.write(JSON.stringify({ command: "session-search rebuild", ...result }, null, 2) + "\n");
+      await new Promise<void>((resolve) => {
+        process.stdout.write(JSON.stringify({ command: "session-search rebuild", ...result }, null, 2) + "\n", () => resolve());
+      });
     } else {
       const hits = await searchSessionIndex(
         path.resolve(opts.index as string),
         opts.query as string,
         { limit: opts.limit, sqliteBinary: process.env.SPLICE_SQLITE3 },
       );
-      process.stdout.write(JSON.stringify({
+      await new Promise<void>((resolve) => {
+        process.stdout.write(JSON.stringify({
         command: "session-search find",
         index: path.resolve(opts.index as string),
         query: opts.query,
         count: hits.length,
         hits,
-      }, null, 2) + "\n");
+        }, null, 2) + "\n", () => resolve());
+      });
     }
     process.exit(0);
   } catch (error) {
@@ -96,7 +100,9 @@ export async function runSessionSearch(argv: string[]): Promise<never> {
       error: error instanceof Error ? error.message : String(error),
     };
     if (error instanceof SessionSearchBuildError) report.manifest = error.manifest;
-    process.stderr.write(JSON.stringify(report, null, 2) + "\n");
+    await new Promise<void>((resolve) => {
+      process.stderr.write(JSON.stringify(report, null, 2) + "\n", () => resolve());
+    });
     process.exit(1);
   }
 }

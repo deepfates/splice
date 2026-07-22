@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { createHash } from "node:crypto";
 import { execa } from "execa";
+import { spawn } from "node:child_process";
 
 import { codexSessionToLyncEvents } from "../../src/outputs/lync-codex-session.js";
 import { claudeSessionToLyncEvents } from "../../src/outputs/lync-claude-session.js";
@@ -77,6 +78,20 @@ async function waitFor(pathname: string): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 2));
   }
   throw new Error(`timed out waiting for ${pathname}`);
+}
+
+async function waitForSnapshot(output: string): Promise<string> {
+  for (let i = 0; i < 5_000; i++) {
+    const stages = await fs.readdir(output).catch(() => []);
+    for (const stage of stages.filter((name) => name.startsWith(".stage-"))) {
+      const dir = path.join(output, stage, "source-snapshots");
+      const snapshots = await fs.readdir(dir).catch(() => []);
+      const ready = snapshots.find((name) => name.endsWith(".lync"));
+      if (ready) return path.join(dir, ready);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  throw new Error("timed out waiting for immutable source snapshot");
 }
 
 describe("private agent-session search projection", () => {
@@ -195,7 +210,7 @@ describe("private agent-session search projection", () => {
       const manifest = (failure as SessionSearchBuildError).manifest;
       expect(manifest.files).toEqual({ discovered: 1, indexed: 0, failed: 1 });
       expect(manifest.events.errors).toBe(1);
-      expect(manifest.errors[0]).toMatchObject({ source: "broken.lync", line: 1, reason: expect.stringMatching(/invalid id|invalid at/) });
+      expect(manifest.errors[0]).toMatchObject({ source: "broken.lync", line: 1, reason: expect.stringMatching(/id must be string|invalid id|invalid at/) });
       expect(await fs.readFile(path.join(output, "CURRENT"), "utf8")).toBe(currentBefore);
       expect(await fs.stat(good.indexPath).then(() => true, () => false)).toBe(true);
       expect((await fs.readdir(output)).some((name) => name.startsWith(".stage-") || name === ".rebuild.lock")).toBe(false);
@@ -231,6 +246,111 @@ describe("private agent-session search projection", () => {
       expect(poisonEntries.some((name) => name.startsWith(".stage-") || name.startsWith(".CURRENT-") || name === ".rebuild.lock")).toBe(false);
       expect(await fs.readdir(path.join(poisoned, "generations"))).toEqual([]);
     } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects digest damage and cross-file conflicts while identical duplicates union as no-ops", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "splice-search-integrity-"));
+    try {
+      const archive = path.join(tmp, "authority");
+      const output = path.join(tmp, "projection");
+      await syntheticArchive(archive);
+      const good = await rebuildSessionSearchIndex(archive, output);
+      const current = await fs.readFile(path.join(output, "CURRENT"), "utf8");
+
+      const damagedFile = path.join(archive, "a-claude.lync");
+      const lines = (await fs.readFile(damagedFile, "utf8")).trimEnd().split("\n");
+      lines[0] = `${lines[0].slice(0, -1)},"digest":"sha256:${"0".repeat(64)}"}`;
+      await fs.writeFile(damagedFile, lines.join("\n") + "\n");
+      await expect(rebuildSessionSearchIndex(archive, output)).rejects.toMatchObject({
+        manifest: { errors: [expect.objectContaining({ reason: expect.stringMatching(/damaged|digest/i) })] },
+      });
+      expect(await fs.readFile(path.join(output, "CURRENT"), "utf8")).toBe(current);
+      expect(await fs.stat(good.indexPath).then(() => true, () => false)).toBe(true);
+
+      await fs.rm(archive, { recursive: true });
+      await fs.mkdir(archive);
+      const source = "codex/duplicate.jsonl";
+      const jsonl = [
+        { timestamp: "2026-01-01T00:00:00.000Z", type: "session_meta", payload: { id: CODEX_ID } },
+        { timestamp: "2026-01-01T00:00:01.000Z", type: "event_msg", payload: { type: "user_message", message: "identical union testimony" } },
+      ].map(JSON.stringify).join("\n") + "\n";
+      const events = codexSessionToLyncEvents(jsonl, source).events;
+      await writeLyncFile(path.join(archive, "one.lync"), events);
+      await writeLyncFile(path.join(archive, "two.lync"), events);
+      const duplicateBuild = await rebuildSessionSearchIndex(archive, output);
+      expect(await searchSessionIndex(duplicateBuild.indexPath, "identical union testimony")).toHaveLength(1);
+      const duplicateCurrent = await fs.readFile(path.join(output, "CURRENT"), "utf8");
+
+      const conflict = structuredClone(events);
+      (conflict[1].payload as Record<string, unknown>).payload = { type: "user_message", message: "conflicting union testimony" };
+      await writeLyncFile(path.join(archive, "two.lync"), conflict);
+      await expect(rebuildSessionSearchIndex(archive, output)).rejects.toMatchObject({
+        message: expect.stringMatching(/union conflict/),
+      });
+      expect(await fs.readFile(path.join(output, "CURRENT"), "utf8")).toBe(duplicateCurrent);
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("hashes and indexes the exact immutable snapshot when authority mutates", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "splice-search-mutation-"));
+    try {
+      const archive = path.join(tmp, "authority");
+      const output = path.join(tmp, "projection");
+      await fs.mkdir(archive);
+      await scaledArchive(archive, 20_000);
+      const source = path.join(archive, "scale.lync");
+      const before = await fs.readFile(source);
+      const build = rebuildSessionSearchIndex(archive, output, { batchRows: 64, batchBytes: 64 * 1024 });
+      await waitForSnapshot(output);
+      const appended = codexSessionToLyncEvents([
+        JSON.stringify({ timestamp: "2026-01-01T00:00:02.000Z", type: "event_msg", payload: { type: "user_message", message: "post-snapshot mutation marker" } }),
+      ].join("\n") + "\n", "codex/other.jsonl").events;
+      const appendFile = path.join(tmp, "append.lync");
+      await writeLyncFile(appendFile, appended);
+      await fs.appendFile(source, await fs.readFile(appendFile));
+      const built = await build;
+      expect(built.manifest.sourceFiles[0]).toMatchObject({
+        bytes: before.length,
+        sha256: createHash("sha256").update(before).digest("hex"),
+      });
+      expect(createHash("sha256").update(await fs.readFile(source)).digest("hex")).not.toBe(built.manifest.sourceFiles[0].sha256);
+      expect(await searchSessionIndex(output, "post-snapshot mutation marker")).toEqual([]);
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("keeps a slow reader's resolved generation open across a publish", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "splice-search-reader-"));
+    let reader: ReturnType<typeof spawn> | null = null;
+    try {
+      const archive = path.join(tmp, "authority");
+      const output = path.join(tmp, "projection");
+      await syntheticArchive(archive);
+      const first = await rebuildSessionSearchIndex(archive, output);
+      reader = spawn("sqlite3", ["-readonly", first.indexPath], { stdio: ["pipe", "pipe", "pipe"] });
+      const began = new Promise<void>((resolve, reject) => {
+        reader!.stdout!.once("data", () => resolve());
+        reader!.once("error", reject);
+      });
+      reader.stdin!.write("BEGIN; SELECT count(*) FROM messages;\n");
+      await began;
+      await fs.copyFile(path.join(archive, "a-claude.lync"), path.join(archive, "b-identical.lync"));
+      const second = await rebuildSessionSearchIndex(archive, output);
+      expect(second.generation).not.toBe(first.generation);
+      expect(await fs.stat(first.indexPath).then(() => true, () => false)).toBe(true);
+      reader.stdin!.end("SELECT count(*) FROM messages; COMMIT;\n");
+      await new Promise<void>((resolve, reject) => {
+        reader!.once("close", (code) => code === 0 ? resolve() : reject(new Error(`reader exited ${code}`)));
+      });
+      reader = null;
+      expect(await searchSessionIndex(first.indexPath, "literal needle phrase")).toHaveLength(2);
+    } finally {
+      if (reader?.exitCode === null) reader.kill();
       await fs.rm(tmp, { recursive: true, force: true });
     }
   });

@@ -269,7 +269,16 @@ rejects concurrent writers to the same projection; a failed controlled rebuild
 leaves the prior generation current. `find` opens the selected database
 read-only, preflights its schema, uses case-sensitive FTS5 trigram candidates,
 then verifies each hit with exact `instr`. Queries must be at least three
-characters.
+characters. Published generations are not deleted during rebuild, so readers
+that already resolved an older `CURRENT` remain valid; generation garbage
+collection is an explicit future/manual maintenance action.
+
+Each source file is copied into a private immutable staging snapshot before it
+is verified, hashed, or indexed. Lync's streaming parser must accept every
+line, and a disk-backed union check rejects the same event id with different
+body bytes across files. Thus the per-file manifest digest covers the exact
+bytes indexed even if the authority file changes during a rebuild; identical
+duplicates retain normal lync union-as-no-op semantics.
 
 The implementation invokes a `sqlite3` executable with FTS5 enabled (macOS's
 system SQLite satisfies this) and deliberately adds no native Node dependency.

@@ -13,6 +13,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
 
 import { isRfc3339 } from "./lync.js";
+import { verifyLyncFileStreaming } from "./lync-session-batch.js";
 
 export const SESSION_SEARCH_SCHEMA = "splice-session-search/v2";
 const DEFAULT_BATCH_ROWS = 256;
@@ -321,6 +322,10 @@ class SqliteTransaction {
         }
       });
     });
+    // A sqlite process can fail before the build reaches its finally/abort
+    // path. Mark the promise observed immediately; callers still await the
+    // original promise and receive the same rejection.
+    void this.closed.catch(() => {});
   }
 
   private onStdout(chunk: string): void {
@@ -472,6 +477,8 @@ export async function rebuildSessionSearchIndex(
     }
     await privateMkdir(stage);
     const indexPath = path.join(stage, "index.sqlite3");
+    const snapshots = path.join(stage, "source-snapshots");
+    await privateMkdir(snapshots);
     const files = await discoverLyncFiles(root);
     manifest.files.discovered = files.length;
     writer = new SqliteTransaction(sqliteBinary, indexPath);
@@ -485,6 +492,8 @@ export async function rebuildSessionSearchIndex(
       "CREATE TABLE messages(id INTEGER PRIMARY KEY,source TEXT NOT NULL,line INTEGER NOT NULL,event_id TEXT NOT NULL,segment INTEGER NOT NULL,platform TEXT NOT NULL,session_id TEXT NOT NULL,role TEXT NOT NULL,kind TEXT NOT NULL,at TEXT NOT NULL,text TEXT NOT NULL,resume_argv TEXT NOT NULL);",
       "CREATE UNIQUE INDEX messages_coordinate ON messages(source,line,event_id,segment);",
       "CREATE VIRTUAL TABLE messages_fts USING fts5(text,content='messages',content_rowid='id',tokenize='trigram case_sensitive 1');",
+      "CREATE TEMP TABLE seen_event_bodies(id TEXT PRIMARY KEY,body_digest TEXT NOT NULL);",
+      "CREATE TEMP TRIGGER reject_event_body_conflict BEFORE INSERT ON seen_event_bodies WHEN EXISTS(SELECT 1 FROM seen_event_bodies WHERE id=NEW.id AND body_digest<>NEW.body_digest) BEGIN SELECT RAISE(ABORT,'lync union same-id different-body conflict'); END;",
       "BEGIN IMMEDIATE;",
     ].join("\n"));
 
@@ -501,7 +510,7 @@ export async function rebuildSessionSearchIndex(
       const first = batch[0].id;
       const last = batch.at(-1)!.id;
       await writer!.execute([
-        "INSERT INTO messages(id,source,line,event_id,segment,platform,session_id,role,kind,at,text,resume_argv)",
+        "INSERT OR IGNORE INTO messages(id,source,line,event_id,segment,platform,session_id,role,kind,at,text,resume_argv)",
         `SELECT json_extract(value,'$.id'),json_extract(value,'$.source'),json_extract(value,'$.line'),json_extract(value,'$.eventId'),json_extract(value,'$.segment'),json_extract(value,'$.platform'),json_extract(value,'$.sessionId'),json_extract(value,'$.role'),json_extract(value,'$.kind'),json_extract(value,'$.at'),json_extract(value,'$.text'),json_extract(value,'$.resumeArgv') FROM json_each(CAST(readfile(${sqlText(batchFile)}) AS TEXT));`,
         `INSERT INTO messages_fts(rowid,text) SELECT id,text FROM messages WHERE id BETWEEN ${first} AND ${last};`,
       ].join("\n"));
@@ -517,9 +526,35 @@ export async function rebuildSessionSearchIndex(
       batchSize += bytes;
     };
 
+    let identityBatch: { id: string; bodyDigest: string }[] = [];
+    let identityBatchNo = 0;
+    const flushIdentities = async (): Promise<void> => {
+      if (identityBatch.length === 0) return;
+      const batchFile = path.join(stage, `identity-${String(identityBatchNo++).padStart(8, "0")}.json`);
+      await fs.writeFile(batchFile, JSON.stringify(identityBatch), { mode: 0o600 });
+      await writer!.execute([
+        "INSERT OR IGNORE INTO seen_event_bodies(id,body_digest)",
+        `SELECT json_extract(value,'$.id'),json_extract(value,'$.bodyDigest') FROM json_each(CAST(readfile(${sqlText(batchFile)}) AS TEXT));`,
+      ].join("\n"));
+      await fs.rm(batchFile, { force: true });
+      identityBatch = [];
+    };
+    const enqueueIdentity = async (identity: { id: string; bodyDigest: string }): Promise<void> => {
+      identityBatch.push(identity);
+      if (identityBatch.length >= batchRows) await flushIdentities();
+    };
+
     for (const relative of files) {
       const full = path.join(root, ...relative.split("/"));
-      const digest = await digestFile(full);
+      const snapshot = path.join(
+        snapshots,
+        `${createHash("sha256").update(relative).digest("hex")}.lync`,
+      );
+      const copying = `${snapshot}.copying`;
+      await fs.copyFile(full, copying);
+      if (process.platform !== "win32") await fs.chmod(copying, 0o400);
+      await fs.rename(copying, snapshot);
+      const digest = await digestFile(snapshot);
       const fileStats: SessionSearchFileManifest = {
         locator: relative,
         ...digest,
@@ -530,8 +565,54 @@ export async function rebuildSessionSearchIndex(
       let fileFailed = false;
       let knownCodexId: string | null = null;
       try {
-        knownCodexId = await codexSessionId(full);
-        const lines = readline.createInterface({ input: createReadStream(full, { encoding: "utf8" }), crlfDelay: Infinity });
+        let integrityLines = 0;
+        let verify;
+        try {
+          verify = await verifyLyncFileStreaming(snapshot, {
+            trackConflicts: false,
+            onAccepted: async ({ id, bodyDigest }) => {
+              integrityLines++;
+              await enqueueIdentity({ id, bodyDigest });
+            },
+          });
+          await flushIdentities();
+        } catch (error) {
+          fileFailed = true;
+          const reason = error instanceof Error ? error.message : String(error);
+          fileStats.events.seen = integrityLines;
+          fileStats.events.errors = integrityLines || 1;
+          manifest.events.seen += fileStats.events.errors;
+          manifest.events.errors += fileStats.events.errors;
+          recordError(manifest, { source: relative, line: null, reason });
+          manifest.files.failed++;
+          throw new SessionSearchBuildError(
+            /same-id different-body conflict/.test(reason)
+              ? `session search: lync union conflict in ${relative}`
+              : `session search: lync verification failed for ${relative}`,
+            manifest,
+          );
+        }
+        if (!verify.ok) {
+          fileFailed = true;
+          fileStats.events.seen = verify.counts.lines;
+          fileStats.events.errors = verify.counts.lines;
+          manifest.events.seen += verify.counts.lines;
+          manifest.events.errors += verify.counts.lines;
+          for (const problem of verify.problems) {
+            recordError(manifest, {
+              source: relative,
+              line: problem.line < 0 ? null : problem.line,
+              reason: `${problem.class}: ${problem.reason}`,
+            });
+          }
+          manifest.files.failed++;
+          throw new SessionSearchBuildError(
+            `session search: lync integrity failed for ${relative}`,
+            manifest,
+          );
+        }
+        knownCodexId = await codexSessionId(snapshot);
+        const lines = readline.createInterface({ input: createReadStream(snapshot, { encoding: "utf8" }), crlfDelay: Infinity });
         let physicalLine = 0;
         for await (const line of lines) {
           physicalLine++;
@@ -577,13 +658,17 @@ export async function rebuildSessionSearchIndex(
           }
         }
       } catch (error) {
+        if (error instanceof SessionSearchBuildError) throw error;
         fileFailed = true;
         recordError(manifest, { source: relative, line: null, reason: error instanceof Error ? error.message : String(error) });
+      } finally {
+        await fs.rm(snapshot, { force: true }).catch(() => {});
       }
       if (fileFailed) manifest.files.failed++;
       else manifest.files.indexed++;
     }
     await flush();
+    await fs.rm(snapshots, { recursive: true, force: true });
     if (manifest.events.seen !== manifest.events.searchable + manifest.events.nonSearchable + manifest.events.errors) {
       throw new Error("session search: event counts do not reconcile");
     }
@@ -593,6 +678,8 @@ export async function rebuildSessionSearchIndex(
     await writer.execute("COMMIT; VACUUM;");
     await writer.finish();
     writer = null;
+    const messageCountOutput = await sqliteOnce(sqliteBinary, indexPath, "SELECT count(*) AS count FROM messages;", { json: true, readonly: true });
+    manifest.messages = Number((JSON.parse(messageCountOutput) as JsonRecord[])[0]?.["count"] ?? 0);
     const manifestBytes = JSON.stringify(manifest, null, 2) + "\n";
     const generation = `gen-${createHash("sha256").update(manifestBytes).digest("hex")}`;
     const manifestPath = path.join(stage, "manifest.json");
@@ -616,11 +703,6 @@ export async function rebuildSessionSearchIndex(
     await fs.rename(currentTmp, path.join(out, "CURRENT"));
     currentTmp = null;
     published = true;
-    for (const entry of await fs.readdir(generations, { withFileTypes: true })) {
-      if (entry.isDirectory() && entry.name !== generation) {
-        await fs.rm(path.join(generations, entry.name), { recursive: true, force: true }).catch(() => {});
-      }
-    }
     return {
       projectionRoot: out,
       generation,
