@@ -273,6 +273,14 @@ characters. Published generations are not deleted during rebuild, so readers
 that already resolved an older `CURRENT` remain valid; generation garbage
 collection is an explicit future/manual maintenance action.
 
+Generation publication copies the completed database and manifest into a new,
+unpointed private generation and verifies both before updating `CURRENT`; it
+does not depend on renaming a populated directory. POSIX replaces `CURRENT`
+atomically. Windows cannot atomically rename over an existing file, so repeat
+publication uses a recoverable pointer-to-backup swap with a brief interval in
+which a new reader may need to retry; already-resolved generation readers are
+unaffected.
+
 Each source file is copied into a private immutable staging snapshot before it
 is verified, hashed, or indexed. Lync's streaming parser must accept every
 line, and a disk-backed union check rejects the same event id with different

@@ -259,6 +259,117 @@ async function privateMkdir(dir: string): Promise<void> {
   if (process.platform !== "win32") await fs.chmod(dir, 0o700);
 }
 
+async function publishCurrentPointer(root: string, generation: string): Promise<void> {
+  const current = path.join(root, "CURRENT");
+  const existing = await fs.stat(current).catch(() => null);
+  if (existing && !existing.isFile()) {
+    throw new Error("session search: CURRENT exists but is not a regular file");
+  }
+  const temporary = path.join(root, `.CURRENT-${randomUUID()}`);
+  const backup = path.join(root, `.CURRENT-backup-${randomUUID()}`);
+  await fs.writeFile(temporary, generation + "\n", { mode: 0o600 });
+  try {
+    try {
+      // Atomic replacement on POSIX; also succeeds on Windows for first publish.
+      await fs.rename(temporary, current);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code ?? "";
+      if (process.platform !== "win32" || !["EEXIST", "EPERM"].includes(code)) {
+        throw error;
+      }
+    }
+
+    // Windows rename cannot replace an existing file. Move the tiny pointer
+    // aside first, install the new one, and restore on a controlled failure.
+    // This is not an atomic replacement, but immutable generation readers are
+    // unaffected once they have resolved CURRENT.
+    let backedUp = false;
+    let preserveBackup = false;
+    try {
+      await fs.rename(current, backup);
+      backedUp = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    try {
+      await fs.rename(temporary, current);
+    } catch (error) {
+      if (backedUp) {
+        try {
+          await fs.rename(backup, current);
+          backedUp = false;
+        } catch (restoreError) {
+          preserveBackup = true;
+          throw new AggregateError(
+            [error, restoreError],
+            `session search: CURRENT replacement failed; prior pointer remains at ${backup}`,
+          );
+        }
+      }
+      throw error;
+    } finally {
+      if (backedUp && !preserveBackup) {
+        await fs.rm(backup, { force: true }).catch(() => {});
+      }
+    }
+  } finally {
+    await fs.rm(temporary, { force: true }).catch(() => {});
+  }
+}
+
+async function populateGeneration(
+  stage: string,
+  generations: string,
+  generation: string,
+  manifestBytes: string,
+  sqliteBinary: string,
+  currentGeneration: string | null,
+): Promise<{ dir: string; created: boolean }> {
+  const dir = path.join(generations, generation);
+  let created = false;
+  try {
+    await fs.mkdir(dir, { mode: 0o700 });
+    created = true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    try {
+      await preflightSessionSearchIndex(path.join(dir, "index.sqlite3"), sqliteBinary);
+      if (await fs.readFile(path.join(dir, "manifest.json"), "utf8") !== manifestBytes) {
+        throw new Error("generation manifest mismatch");
+      }
+      return { dir, created: false };
+    } catch (validationError) {
+      if (currentGeneration === generation) {
+        throw new Error(
+          `session search: current generation ${generation} is incomplete or invalid; refusing destructive repair: ${validationError instanceof Error ? validationError.message : String(validationError)}`,
+        );
+      }
+      await fs.rm(dir, { recursive: true, force: true });
+      await fs.mkdir(dir, { mode: 0o700 });
+      created = true;
+    }
+  }
+
+  try {
+    await fs.copyFile(path.join(stage, "index.sqlite3"), path.join(dir, "index.sqlite3"));
+    await fs.copyFile(path.join(stage, "manifest.json"), path.join(dir, "manifest.json"));
+    if (process.platform !== "win32") {
+      await fs.chmod(dir, 0o700);
+      await fs.chmod(path.join(dir, "index.sqlite3"), 0o600);
+      await fs.chmod(path.join(dir, "manifest.json"), 0o600);
+    }
+    await preflightSessionSearchIndex(path.join(dir, "index.sqlite3"), sqliteBinary);
+    if (await fs.readFile(path.join(dir, "manifest.json"), "utf8") !== manifestBytes) {
+      throw new Error("session search: copied generation manifest failed verification");
+    }
+    return { dir, created };
+  } catch (error) {
+    if (created) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+}
+
 async function discoverLyncFiles(root: string): Promise<string[]> {
   const files: string[] = [];
   async function walk(dir: string): Promise<void> {
@@ -472,7 +583,6 @@ export async function rebuildSessionSearchIndex(
   let writer: SqliteTransaction | null = null;
   let createdGeneration: string | null = null;
   let published = false;
-  let currentTmp: string | null = null;
   try {
     try {
       await fs.mkdir(lock, { mode: 0o700 });
@@ -707,19 +817,19 @@ export async function rebuildSessionSearchIndex(
       await fs.chmod(manifestPath, 0o600);
     }
     await privateMkdir(generations);
-    const generationDir = path.join(generations, generation);
-    try {
-      await fs.rename(stage, generationDir);
-      createdGeneration = generationDir;
-    } catch (error) {
-      if (!["EEXIST", "ENOTEMPTY"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
-      await fs.rm(stage, { recursive: true, force: true });
-      await preflightSessionSearchIndex(path.join(generationDir, "index.sqlite3"), sqliteBinary);
-    }
-    currentTmp = path.join(out, `.CURRENT-${randomUUID()}`);
-    await fs.writeFile(currentTmp, generation + "\n", { mode: 0o600 });
-    await fs.rename(currentTmp, path.join(out, "CURRENT"));
-    currentTmp = null;
+    const currentGeneration = await fs.readFile(path.join(out, "CURRENT"), "utf8")
+      .then((value) => value.trim(), () => null);
+    const populated = await populateGeneration(
+      stage,
+      generations,
+      generation,
+      manifestBytes,
+      sqliteBinary,
+      currentGeneration,
+    );
+    const generationDir = populated.dir;
+    if (populated.created) createdGeneration = generationDir;
+    await publishCurrentPointer(out, generation);
     published = true;
     return {
       projectionRoot: out,
@@ -731,7 +841,6 @@ export async function rebuildSessionSearchIndex(
   } finally {
     if (writer) await writer.abort();
     await fs.rm(stage, { recursive: true, force: true }).catch(() => {});
-    if (currentTmp) await fs.rm(currentTmp, { force: true }).catch(() => {});
     if (!published && createdGeneration) {
       await fs.rm(createdGeneration, { recursive: true, force: true }).catch(() => {});
     }
