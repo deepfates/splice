@@ -48,6 +48,8 @@ export * from "./outputs/lync-markdown.js";
 export * from "./outputs/lync-session-batch.js";
 export * from "./outputs/lync-claude-session.js";
 export * from "./outputs/lync-codex-session.js";
+// Rebuildable private exact-text projection over agent-session lync files
+export * from "./outputs/lync-session-search.js";
 // Claude session → a real lync conversation loom (textile-explorer lane)
 export * from "./outputs/lync-session-loom.js";
 // Claude.ai account export (conversations.json) → conversation looms (dee-6nkt)

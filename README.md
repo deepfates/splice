@@ -246,6 +246,39 @@ conversion replaces the generated file on every platform; replacement is
 atomic on POSIX, while Windows may briefly remove the old destination before
 renaming the verified staged file into place.
 
+### Private session search projection
+
+`rebuildSessionSearchIndex` builds a disposable SQLite FTS5 projection over a
+tree of Splice-produced Codex and Claude Code `.lync` files, and
+`searchSessionIndex` performs literal, case-sensitive text searches. The lync
+files remain authority: the index can always be deleted and rebuilt. Rebuilds
+walk sorted root-relative paths, contain no wall-clock fields, and report a
+manifest whose event counts reconcile to searchable, deliberately
+non-searchable, or erroneous input.
+
+Privacy is structural rather than a query-time convention. Only user and
+assistant message text enters the database. System/developer prompts,
+reasoning, tool calls and results, and session sidecars are never copied into
+the projection. Hits contain stable source path/line/event coordinates and an
+argument vector for the source-native resume command (`codex resume
+<session-id>` or `claude --resume <session-id>`). Projection directories are
+0700 and the database and manifest are 0600 on POSIX.
+
+The implementation invokes a `sqlite3` executable with FTS5 enabled (macOS's
+system SQLite satisfies this) and deliberately adds no native Node dependency.
+Callers on other platforms must provide such an executable, optionally through
+the `sqliteBinary` option.
+
+```ts
+import {
+  rebuildSessionSearchIndex,
+  searchSessionIndex,
+} from "@deepfates/splice";
+
+const built = await rebuildSessionSearchIndex("./session-lync", "./search");
+const hits = await searchSessionIndex(built.indexPath, "literal phrase");
+```
+
 ## Sources
 
 ### Twitter/X
