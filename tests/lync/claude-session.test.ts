@@ -255,6 +255,71 @@ describe("claude session JSONL → lync mapping", () => {
 });
 
 describe("claude session tree batch: zero silent drops at the file level", () => {
+  it("gives same-named workflow journals distinct root-relative identities", async () => {
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "splice-claude-workflows-"),
+    );
+    const outDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "splice-claude-workflows-out-"),
+    );
+    try {
+      const workflowJournal = `${JSON.stringify(aiTitleRecord)}\n`;
+      for (const workflow of ["workflow-a", "workflow-b"]) {
+        await fs.mkdir(path.join(root, workflow), { recursive: true });
+        await fs.writeFile(
+          path.join(root, workflow, "journal.jsonl"),
+          workflowJournal,
+        );
+      }
+
+      const result = await convertClaudeSessionTreeToLync(root, outDir);
+      expect(result.filesConverted).toBe(2);
+
+      const [a, b] = await Promise.all(
+        result.files.map(async ({ outputPath }) =>
+          JSON.parse((await fs.readFile(outputPath, "utf8")).trim()),
+        ),
+      );
+      expect(a.id).not.toBe(b.id);
+      expect(a.author.source).toBe("workflow-a/journal.jsonl:1");
+      expect(b.author.source).toBe("workflow-b/journal.jsonl:1");
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+      await fs.rm(outDir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "makes trace output directories and files private",
+    async () => {
+      const root = await fs.mkdtemp(
+        path.join(os.tmpdir(), "splice-claude-private-"),
+      );
+      const outDir = await fs.mkdtemp(
+        path.join(os.tmpdir(), "splice-claude-private-out-"),
+      );
+      try {
+        await fs.chmod(outDir, 0o777);
+        await fs.mkdir(path.join(root, "workflow"), { recursive: true });
+        await fs.writeFile(
+          path.join(root, "workflow", "journal.jsonl"),
+          FIXTURE,
+        );
+
+        const result = await convertClaudeSessionTreeToLync(root, outDir);
+        const nestedDir = path.dirname(result.files[0].outputPath);
+        expect((await fs.stat(outDir)).mode & 0o777).toBe(0o700);
+        expect((await fs.stat(nestedDir)).mode & 0o777).toBe(0o700);
+        expect(
+          (await fs.stat(result.files[0].outputPath)).mode & 0o777,
+        ).toBe(0o600);
+      } finally {
+        await fs.rm(root, { recursive: true, force: true });
+        await fs.rm(outDir, { recursive: true, force: true });
+      }
+    },
+  );
+
   // chmod 000 is a no-op on Windows, so "discoverable but unreadable" cannot
   // be staged there; the unreadable leg runs on the POSIX matrix legs and
   // skips loudly here (totals logic is platform-independent and covered).
@@ -268,6 +333,13 @@ describe("claude session tree batch: zero silent drops at the file level", () =>
       await fs.writeFile(locked, FIXTURE);
       await fs.chmod(locked, 0o000); // unreadable-file case
       await fs.writeFile(path.join(root, "project-a", "notes.txt"), "ignore me");
+      const previousLockedOutput = path.join(
+        outDir,
+        "project-a",
+        "locked.lync",
+      );
+      await fs.mkdir(path.dirname(previousLockedOutput), { recursive: true });
+      await fs.writeFile(previousLockedOutput, "previous verified output\n");
 
       const result = await convertClaudeSessionTreeToLync(root, outDir);
 
@@ -279,6 +351,9 @@ describe("claude session tree batch: zero silent drops at the file level", () =>
       );
       expect(result.filesUnreadable[0].reason).toMatch(/permission denied|EACCES/i);
       expect(result.filesIgnored).toEqual([path.join("project-a", "notes.txt")]);
+      expect(await fs.readFile(previousLockedOutput, "utf8")).toBe(
+        "previous verified output\n",
+      );
       expect(result.filesConverted + result.filesUnreadable.length).toBe(
         result.filesDiscovered,
       );
