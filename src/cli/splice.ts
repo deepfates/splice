@@ -36,6 +36,7 @@ import {
 } from "../core/store.js";
 import { decisionsFromIds } from "../core/decisions.js";
 import { runLync } from "./lync.js";
+import { runSessionSearch } from "./session-search.js";
 
 /* -------------------------------- version -------------------------------- */
 
@@ -61,6 +62,10 @@ async function main() {
   // event files. Handled before flag parsing; runLync always exits.
   if (process.argv[2] === "lync") {
     await runLync(process.argv);
+    return;
+  }
+  if (process.argv[2] === "session-search") {
+    await runSessionSearch(process.argv);
     return;
   }
 

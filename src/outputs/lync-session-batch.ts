@@ -204,6 +204,19 @@ const VERIFY_CHUNK_BYTES = 32 * 1024 * 1024;
  */
 export async function verifyLyncFileStreaming(
   filePath: string,
+  opts: {
+    /**
+     * Observe parser-accepted identities without retaining them in memory.
+     * Callers may use a disk-backed union table for cross-file conflicts.
+     */
+    onAccepted?: (identity: {
+      id: string;
+      bodyDigest: string;
+      line: number;
+    }) => void | Promise<void>;
+    /** Disable the per-file in-memory id map when onAccepted owns conflicts. */
+    trackConflicts?: boolean;
+  } = {},
 ): Promise<LyncVerifyResult> {
   const byKind: Record<string, number> = {};
   const problems: LyncVerifyProblem[] = [];
@@ -250,9 +263,16 @@ export async function verifyLyncFileStreaming(
             const kind = line.event?.kind ?? "<unknown>";
             byKind[kind] = (byKind[kind] ?? 0) + 1;
             if (line.id && line.bodyDigest) {
-              const seen = digestById.get(line.id);
-              if (seen === undefined) digestById.set(line.id, line.bodyDigest);
-              else if (seen !== line.bodyDigest) conflictIds.add(line.id);
+              if (opts.trackConflicts !== false) {
+                const seen = digestById.get(line.id);
+                if (seen === undefined) digestById.set(line.id, line.bodyDigest);
+                else if (seen !== line.bodyDigest) conflictIds.add(line.id);
+              }
+              await opts.onAccepted?.({
+                id: line.id,
+                bodyDigest: line.bodyDigest,
+                line: lineOffset + line.line,
+              });
             }
           } else {
             problems.push({
@@ -280,7 +300,12 @@ export async function verifyLyncFileStreaming(
 
   return {
     ok: problems.length === 0 && accepted === lines && conflictIds.size === 0,
-    counts: { lines, events: digestById.size, accepted, byKind },
+    counts: {
+      lines,
+      events: opts.trackConflicts === false ? accepted : digestById.size,
+      accepted,
+      byKind,
+    },
     problems,
   };
 }

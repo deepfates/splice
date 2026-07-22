@@ -246,6 +246,74 @@ conversion replaces the generated file on every platform; replacement is
 atomic on POSIX, while Windows may briefly remove the old destination before
 renaming the verified staged file into place.
 
+### Private session search projection
+
+`splice session-search rebuild` builds a disposable SQLite FTS5 projection
+over a tree of Splice-produced Codex and Claude Code `.lync` files;
+`splice session-search find` performs literal, case-sensitive searches. The
+lync files remain authority. Rebuilds walk byte-sorted root-relative paths,
+stream bounded batches through one transaction, and report a deterministic
+manifest with per-file digests and reconciled counts.
+
+Privacy is structural rather than a query-time convention. Only user and
+assistant message text enters the database. System/developer prompts,
+reasoning, tool calls and results, and session sidecars are never copied into
+the projection. Hits contain stable source path/line/event coordinates and an
+argument vector for the source-native resume command (`codex resume
+<session-id>` or `claude --resume <session-id>`). Projection directories are
+0700 and the database and manifest are 0600 on POSIX.
+
+Rebuilds publish immutable generations beneath a stable private projection
+directory and atomically replace its `CURRENT` pointer. A fail-fast lock
+rejects concurrent writers to the same projection; a failed controlled rebuild
+leaves the prior generation current. `find` opens the selected database
+read-only, preflights its schema, uses case-sensitive FTS5 trigram candidates,
+then verifies each hit with exact `instr`. Queries must be at least three
+characters. Published generations are not deleted during rebuild, so readers
+that already resolved an older `CURRENT` remain valid; generation garbage
+collection is an explicit future/manual maintenance action.
+
+Generation publication copies the completed database and manifest into a new,
+unpointed private generation and verifies both before updating `CURRENT`; it
+does not depend on renaming a populated directory. POSIX replaces `CURRENT`
+atomically. Windows cannot atomically rename over an existing file, so repeat
+publication uses a recoverable pointer-to-backup swap with a brief interval in
+which a new reader may need to retry; already-resolved generation readers are
+unaffected.
+
+Each source file is copied into a private immutable staging snapshot before it
+is verified, hashed, or indexed. Lync's streaming parser must accept every
+line, and a disk-backed union check rejects the same event id with different
+body bytes across files. Thus the per-file manifest digest covers the exact
+bytes indexed even if the authority file changes during a rebuild; identical
+duplicates retain normal lync union-as-no-op semantics. The manifest separates
+source message segments from unique projected rows and reports identities
+seen, unique identities, and identical duplicates. Rebuild preflight requires
+SQLite to honor `PRAGMA temp_store=FILE`; the union identity table therefore
+does not grow in process memory.
+
+The implementation invokes a `sqlite3` executable with FTS5 enabled (macOS's
+system SQLite satisfies this) and deliberately adds no native Node dependency.
+Callers on other platforms must provide such an executable, optionally through
+the `sqliteBinary` option or `SPLICE_SQLITE3` for the CLI.
+
+```ts
+import {
+  rebuildSessionSearchIndex,
+  searchSessionIndex,
+} from "@deepfates/splice";
+
+const built = await rebuildSessionSearchIndex("./session-lync", "./search");
+const hits = await searchSessionIndex(built.indexPath, "literal phrase");
+```
+
+Or use the direct JSON CLI surface:
+
+```sh
+splice session-search rebuild --source ./session-lync --out ./private-search
+splice session-search find --index ./private-search --query "literal phrase"
+```
+
 ## Sources
 
 ### Twitter/X
