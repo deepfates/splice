@@ -49,7 +49,6 @@
  * accounting lives in lync-session-batch.ts.
  */
 
-import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
 import type { LyncEventBody } from "@deepfates/lync/events";
@@ -58,8 +57,6 @@ import {
   DEFAULT_OPERATOR,
   SPLICE_IMPORT_VERSION,
   deterministicLyncId,
-  writeLyncFile,
-  verifyLyncFile,
   type LyncAuthor,
   type LyncProducerOptions,
   type LyncSkippedRecord,
@@ -68,6 +65,7 @@ import {
 } from "./lync.js";
 import {
   convertSessionTreeToLync,
+  convertSessionFileToLync,
   normalizeSessionAt,
   skippedLineValue,
   splitSessionJsonl,
@@ -189,9 +187,10 @@ function codexAuthor(
 /**
  * Incremental per-line mapper (the streaming batch path uses this directly;
  * codexSessionToLyncEvents wraps it for whole-text callers). `sessionLocator`
- * is the stable file identity used in every derived id (the file basename,
- * e.g. "rollout-<ts>-<uuid>.jsonl" — machine-independent); `sourceRef` (the
- * path-or-ref for author.source and payload.source.path) defaults to it.
+ * is the stable file identity used in every derived id. In a batch it is the
+ * normalized root-relative path; single-file callers use the basename unless
+ * they provide another locator. `sourceRef` (the path-or-ref for author.source
+ * and payload.source.path) defaults to it.
  */
 export interface CodexSessionLineMapper extends SessionLineMapper {
   finish(): CodexSessionLyncStats;
@@ -403,31 +402,19 @@ export async function convertCodexSessionToLync(
   outputPath: string,
   opts: CodexSessionOptions = {},
 ): Promise<CodexSessionLyncConversion> {
-  const text = await fs.readFile(inputPath, "utf8");
-  const mapped = codexSessionToLyncEvents(text, path.basename(inputPath), {
+  const mapper = createCodexSessionLineMapper(path.basename(inputPath), {
     sourceRef: opts.sourceRef ?? inputPath,
     ...opts,
   });
-  await writeLyncFile(outputPath, mapped.events);
-  const verify = await verifyLyncFile(outputPath);
-  if (!verify.ok) {
-    throw new Error(
-      `lync verify failed for ${outputPath}: ${JSON.stringify(verify.problems)}`,
-    );
-  }
-  if (verify.counts.accepted !== mapped.events.length) {
-    throw new Error(
-      `lync verify count mismatch for ${outputPath}: wrote ${mapped.events.length}, accepted ${verify.counts.accepted}`,
-    );
-  }
-  return { outputPath, stats: mapped.stats, verify };
+  return convertSessionFileToLync(inputPath, outputPath, mapper);
 }
 
 /**
  * Batch: convert every `.jsonl` rollout under `inputDir` (the shape of
  * ~/.codex/sessions) to mirrored `.lync` files under `outputDir`, with
  * file-level zero-silent-drops accounting (see lync-session-batch.ts).
- * Ids derive from each file's basename, never from where the tree lives.
+ * Ids derive from each file's logical root-relative path, never from the
+ * machine-specific absolute root.
  */
 export async function convertCodexSessionTreeToLync(
   inputDir: string,

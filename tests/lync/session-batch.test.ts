@@ -8,6 +8,7 @@ import type { LyncEventBody } from "@deepfates/lync/events";
 
 import {
   convertSessionFileToLync,
+  preflightSessionLogicalLocators,
   scanSessionTree,
   splitSessionJsonl,
   verifyLyncFileStreaming,
@@ -48,6 +49,47 @@ describe("splitSessionJsonl", () => {
       { lineNo: 2, text: "" },
       { lineNo: 3, text: "b" },
     ]);
+  });
+});
+
+describe("session logical locator preflight", () => {
+  it("normalizes separator spelling and rejects duplicate logical identities", () => {
+    expect(() =>
+      preflightSessionLogicalLocators([
+        "workflow-a/journal.jsonl",
+        "workflow-a\\journal.jsonl",
+      ]),
+    ).toThrow(/duplicate logical locator.*workflow-a\/journal\.jsonl/);
+  });
+});
+
+describe("private atomic session output", () => {
+  it("leaves an existing destination intact when conversion fails", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "splice-atomic-"));
+    try {
+      const input = path.join(dir, "input.jsonl");
+      const output = path.join(dir, "output.lync");
+      await fs.writeFile(input, "{}\n", "utf8");
+      await fs.writeFile(output, "previous verified output\n", "utf8");
+
+      await expect(
+        convertSessionFileToLync(input, output, {
+          mapLine: () => [syntheticEvent(1)],
+          finish: () => {
+            throw new Error("synthetic reconciliation failure");
+          },
+        }),
+      ).rejects.toThrow("synthetic reconciliation failure");
+
+      expect(await fs.readFile(output, "utf8")).toBe(
+        "previous verified output\n",
+      );
+      expect(
+        (await fs.readdir(dir)).filter((name) => name.endsWith(".tmp")),
+      ).toEqual([]);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
   });
 });
 
