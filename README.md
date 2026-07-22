@@ -248,13 +248,12 @@ renaming the verified staged file into place.
 
 ### Private session search projection
 
-`rebuildSessionSearchIndex` builds a disposable SQLite FTS5 projection over a
-tree of Splice-produced Codex and Claude Code `.lync` files, and
-`searchSessionIndex` performs literal, case-sensitive text searches. The lync
-files remain authority: the index can always be deleted and rebuilt. Rebuilds
-walk sorted root-relative paths, contain no wall-clock fields, and report a
-manifest whose event counts reconcile to searchable, deliberately
-non-searchable, or erroneous input.
+`splice session-search rebuild` builds a disposable SQLite FTS5 projection
+over a tree of Splice-produced Codex and Claude Code `.lync` files;
+`splice session-search find` performs literal, case-sensitive searches. The
+lync files remain authority. Rebuilds walk byte-sorted root-relative paths,
+stream bounded batches through one transaction, and report a deterministic
+manifest with per-file digests and reconciled counts.
 
 Privacy is structural rather than a query-time convention. Only user and
 assistant message text enters the database. System/developer prompts,
@@ -264,10 +263,18 @@ argument vector for the source-native resume command (`codex resume
 <session-id>` or `claude --resume <session-id>`). Projection directories are
 0700 and the database and manifest are 0600 on POSIX.
 
+Rebuilds publish immutable generations beneath a stable private projection
+directory and atomically replace its `CURRENT` pointer. A fail-fast lock
+rejects concurrent writers to the same projection; a failed controlled rebuild
+leaves the prior generation current. `find` opens the selected database
+read-only, preflights its schema, uses case-sensitive FTS5 trigram candidates,
+then verifies each hit with exact `instr`. Queries must be at least three
+characters.
+
 The implementation invokes a `sqlite3` executable with FTS5 enabled (macOS's
 system SQLite satisfies this) and deliberately adds no native Node dependency.
 Callers on other platforms must provide such an executable, optionally through
-the `sqliteBinary` option.
+the `sqliteBinary` option or `SPLICE_SQLITE3` for the CLI.
 
 ```ts
 import {
@@ -277,6 +284,13 @@ import {
 
 const built = await rebuildSessionSearchIndex("./session-lync", "./search");
 const hits = await searchSessionIndex(built.indexPath, "literal phrase");
+```
+
+Or use the direct JSON CLI surface:
+
+```sh
+splice session-search rebuild --source ./session-lync --out ./private-search
+splice session-search find --index ./private-search --query "literal phrase"
 ```
 
 ## Sources

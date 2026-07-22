@@ -32,6 +32,18 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
+      - name: Install SQLite on Ubuntu
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y sqlite3
+
+      - name: Install SQLite on Windows
+        if: runner.os == 'Windows'
+        run: choco install sqlite --no-progress -y
+
+      - name: Verify SQLite FTS5 trigram prerequisite
+        shell: bash
+        run: sqlite3 :memory: "CREATE VIRTUAL TABLE probe USING fts5(text, tokenize='trigram case_sensitive 1'); SELECT json_array_length('[]'), length(readfile('package.json'));"
+
       - name: Install dependencies (npm ci)
         run: npm ci
 

@@ -274,6 +274,8 @@ export function usage(): string {
     "  splice lync <command> --source <path> --out <file.lync>",
     "         Convert archives to lync event files (archive, glowfic, ocr, tweet-embed);",
     "         see `splice lync --help` for commands and options",
+    "  splice session-search <rebuild|find> [options]",
+    "         Rebuild/query the private Codex/Claude session projection; see `splice session-search --help`",
     "",
     "Options:",
     "  --source <path>            Path to the Twitter archive directory",
