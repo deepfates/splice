@@ -108,6 +108,8 @@ describe("private agent-session search projection", () => {
         schema: SESSION_SEARCH_SCHEMA,
         files: { discovered: 2, indexed: 2, failed: 0 },
         events: { seen: 6, searchable: 3, nonSearchable: 3, errors: 0 },
+        union: { identitiesSeen: 6, unique: 6, identicalDuplicates: 0 },
+        messageSegments: 3,
         messages: 3,
       });
       expect(first.manifest.sourceFiles.map((file) => file.locator)).toEqual([
@@ -175,6 +177,12 @@ describe("private agent-session search projection", () => {
       await expect(rebuildSessionSearchIndex(archive, output)).rejects.toThrow(/already running/);
       const built = await first;
       expect(built.manifest.messages).toBe(5_000);
+      expect(built.manifest.messageSegments).toBe(5_000);
+      expect(built.manifest.union).toEqual({
+        identitiesSeen: 5_001,
+        unique: 5_001,
+        identicalDuplicates: 0,
+      });
       expect(built.manifest.build.peakBatchRows).toBeLessThanOrEqual(64);
       expect(built.manifest.build.peakBatchBytes).toBeLessThanOrEqual(64 * 1024);
       expect(await fs.stat(path.join(output, ".rebuild.lock")).then(() => true, () => false)).toBe(false);
@@ -277,10 +285,18 @@ describe("private agent-session search projection", () => {
         { timestamp: "2026-01-01T00:00:01.000Z", type: "event_msg", payload: { type: "user_message", message: "identical union testimony" } },
       ].map(JSON.stringify).join("\n") + "\n";
       const events = codexSessionToLyncEvents(jsonl, source).events;
-      await writeLyncFile(path.join(archive, "one.lync"), events);
+      await writeLyncFile(path.join(archive, "one.lync"), [...events, ...events]);
       await writeLyncFile(path.join(archive, "two.lync"), events);
       const duplicateBuild = await rebuildSessionSearchIndex(archive, output);
       expect(await searchSessionIndex(duplicateBuild.indexPath, "identical union testimony")).toHaveLength(1);
+      expect(duplicateBuild.manifest.union).toEqual({
+        identitiesSeen: 6,
+        unique: 2,
+        identicalDuplicates: 4,
+      });
+      expect(duplicateBuild.manifest.messageSegments).toBe(3);
+      expect(duplicateBuild.manifest.messages).toBe(1);
+      expect(duplicateBuild.manifest.sourceFiles.map((file) => file.messageSegments)).toEqual([2, 1]);
       const duplicateCurrent = await fs.readFile(path.join(output, "CURRENT"), "utf8");
 
       const conflict = structuredClone(events);

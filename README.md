@@ -278,7 +278,11 @@ is verified, hashed, or indexed. Lync's streaming parser must accept every
 line, and a disk-backed union check rejects the same event id with different
 body bytes across files. Thus the per-file manifest digest covers the exact
 bytes indexed even if the authority file changes during a rebuild; identical
-duplicates retain normal lync union-as-no-op semantics.
+duplicates retain normal lync union-as-no-op semantics. The manifest separates
+source message segments from unique projected rows and reports identities
+seen, unique identities, and identical duplicates. Rebuild preflight requires
+SQLite to honor `PRAGMA temp_store=FILE`; the union identity table therefore
+does not grow in process memory.
 
 The implementation invokes a `sqlite3` executable with FTS5 enabled (macOS's
 system SQLite satisfies this) and deliberately adds no native Node dependency.

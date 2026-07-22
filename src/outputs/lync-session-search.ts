@@ -33,7 +33,7 @@ export interface SessionSearchFileManifest {
   sha256: string;
   bytes: number;
   events: { seen: number; searchable: number; nonSearchable: number; errors: number };
-  messages: number;
+  messageSegments: number;
 }
 
 export interface SessionSearchManifest {
@@ -49,6 +49,10 @@ export interface SessionSearchManifest {
     nonSearchableByReason: Record<string, number>;
     errors: number;
   };
+  union: { identitiesSeen: number; unique: number; identicalDuplicates: number };
+  /** Source message segments before lync union de-duplication. */
+  messageSegments: number;
+  /** Unique searchable rows actually present in SQLite. */
   messages: number;
   build: {
     batchRows: number;
@@ -411,8 +415,10 @@ export async function checkSessionSearchPrerequisites(sqliteBinary = "sqlite3"):
       "CREATE VIRTUAL TABLE probe USING fts5(text, tokenize='trigram case_sensitive 1');",
       `SELECT sqlite_version() || ':' || json_array_length(CAST(readfile(${sqlText(probe)}) AS TEXT));`,
     ].join("\n");
-    const output = await sqliteOnce(sqliteBinary, ":memory:", sql);
-    const verdict = output.trim().split(/\r?\n/).at(-1);
+    const output = await sqliteOnce(sqliteBinary, ":memory:", `PRAGMA temp_store=FILE;\nPRAGMA temp_store;\n${sql}`);
+    const lines = output.trim().split(/\r?\n/);
+    if (lines[0] !== "1") throw new Error("sqlite3 refused PRAGMA temp_store=FILE");
+    const verdict = lines.at(-1);
     if (!verdict?.endsWith(":0")) throw new Error("sqlite3 lacks FTS5 trigram, JSON1, or readfile support");
     return verdict.slice(0, -2);
   } finally {
@@ -428,6 +434,8 @@ function emptyManifest(batchRows: number, batchBytes: number): SessionSearchMani
     sourceFiles: [],
     files: { discovered: 0, indexed: 0, failed: 0 },
     events: { seen: 0, searchable: 0, nonSearchable: 0, nonSearchableByReason: {}, errors: 0 },
+    union: { identitiesSeen: 0, unique: 0, identicalDuplicates: 0 },
+    messageSegments: 0,
     messages: 0,
     build: { batchRows, batchBytes, peakBatchRows: 0, peakBatchBytes: 0 },
     errors: [],
@@ -486,14 +494,18 @@ export async function rebuildSessionSearchIndex(
       ".bail on",
       "PRAGMA journal_mode=DELETE;",
       "PRAGMA synchronous=FULL;",
+      "PRAGMA temp_store=FILE;",
       "PRAGMA user_version=2;",
       "CREATE TABLE metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);",
       `INSERT INTO metadata VALUES('schema',${sqlText(SESSION_SEARCH_SCHEMA)}),('tokenizer','trigram case_sensitive 1');`,
       "CREATE TABLE messages(id INTEGER PRIMARY KEY,source TEXT NOT NULL,line INTEGER NOT NULL,event_id TEXT NOT NULL,segment INTEGER NOT NULL,platform TEXT NOT NULL,session_id TEXT NOT NULL,role TEXT NOT NULL,kind TEXT NOT NULL,at TEXT NOT NULL,text TEXT NOT NULL,resume_argv TEXT NOT NULL);",
       "CREATE UNIQUE INDEX messages_coordinate ON messages(source,line,event_id,segment);",
       "CREATE VIRTUAL TABLE messages_fts USING fts5(text,content='messages',content_rowid='id',tokenize='trigram case_sensitive 1');",
+      "CREATE TABLE union_accounting(identities_seen INTEGER NOT NULL,unique_count INTEGER NOT NULL);",
+      "INSERT INTO union_accounting VALUES(0,0);",
       "CREATE TEMP TABLE seen_event_bodies(id TEXT PRIMARY KEY,body_digest TEXT NOT NULL);",
       "CREATE TEMP TRIGGER reject_event_body_conflict BEFORE INSERT ON seen_event_bodies WHEN EXISTS(SELECT 1 FROM seen_event_bodies WHERE id=NEW.id AND body_digest<>NEW.body_digest) BEGIN SELECT RAISE(ABORT,'lync union same-id different-body conflict'); END;",
+      "CREATE TEMP TRIGGER count_unique_event_body AFTER INSERT ON seen_event_bodies BEGIN UPDATE union_accounting SET unique_count=unique_count+1; END;",
       "BEGIN IMMEDIATE;",
     ].join("\n"));
 
@@ -533,6 +545,7 @@ export async function rebuildSessionSearchIndex(
       const batchFile = path.join(stage, `identity-${String(identityBatchNo++).padStart(8, "0")}.json`);
       await fs.writeFile(batchFile, JSON.stringify(identityBatch), { mode: 0o600 });
       await writer!.execute([
+        `UPDATE union_accounting SET identities_seen=identities_seen+(SELECT count(*) FROM json_each(CAST(readfile(${sqlText(batchFile)}) AS TEXT)));`,
         "INSERT OR IGNORE INTO seen_event_bodies(id,body_digest)",
         `SELECT json_extract(value,'$.id'),json_extract(value,'$.bodyDigest') FROM json_each(CAST(readfile(${sqlText(batchFile)}) AS TEXT));`,
       ].join("\n"));
@@ -559,7 +572,7 @@ export async function rebuildSessionSearchIndex(
         locator: relative,
         ...digest,
         events: { seen: 0, searchable: 0, nonSearchable: 0, errors: 0 },
-        messages: 0,
+        messageSegments: 0,
       };
       manifest.sourceFiles.push(fileStats);
       let fileFailed = false;
@@ -652,8 +665,8 @@ export async function rebuildSessionSearchIndex(
           } else {
             fileStats.events.searchable++;
             manifest.events.searchable++;
-            fileStats.messages += extraction.segments.length;
-            manifest.messages += extraction.segments.length;
+            fileStats.messageSegments += extraction.segments.length;
+            manifest.messageSegments += extraction.segments.length;
             for (const [segment, row] of extraction.segments.entries()) await enqueue({ ...row, segment });
           }
         }
@@ -680,6 +693,11 @@ export async function rebuildSessionSearchIndex(
     writer = null;
     const messageCountOutput = await sqliteOnce(sqliteBinary, indexPath, "SELECT count(*) AS count FROM messages;", { json: true, readonly: true });
     manifest.messages = Number((JSON.parse(messageCountOutput) as JsonRecord[])[0]?.["count"] ?? 0);
+    const unionOutput = await sqliteOnce(sqliteBinary, indexPath, "SELECT identities_seen AS identitiesSeen,unique_count AS uniqueCount FROM union_accounting;", { json: true, readonly: true });
+    const unionRow = (JSON.parse(unionOutput) as JsonRecord[])[0] ?? {};
+    manifest.union.identitiesSeen = Number(unionRow["identitiesSeen"] ?? 0);
+    manifest.union.unique = Number(unionRow["uniqueCount"] ?? 0);
+    manifest.union.identicalDuplicates = manifest.union.identitiesSeen - manifest.union.unique;
     const manifestBytes = JSON.stringify(manifest, null, 2) + "\n";
     const generation = `gen-${createHash("sha256").update(manifestBytes).digest("hex")}`;
     const manifestPath = path.join(stage, "manifest.json");
