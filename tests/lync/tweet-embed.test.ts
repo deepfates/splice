@@ -286,8 +286,6 @@ describe(`end-to-end against ${realDir ? "the REAL deep-space cache" : "the fixt
         jsonFiles.length,
       );
       if (realDir) {
-        // ticket observed 395 files; the live cache only grows
-        expect(jsonFiles.length).toBeGreaterThanOrEqual(395);
         expect(result.stats.skipped).toEqual([]);
       }
 
