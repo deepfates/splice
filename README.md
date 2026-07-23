@@ -245,6 +245,18 @@ the physical location of the copied archive is not identity. Human-readable
 `author.source` and payload paths remain root-relative. A breaking locator or
 id change must introduce a new schema value rather than silently reusing v1.
 
+Claude UUID-bearing records additionally use the repeat identity recipe
+`splice-claude-repeat/v2`. Real subagent and compaction journals can repeat one
+UUID within a file or copy it across files. The first occurrence in the
+byte-sorted tree remains the canonical UUID-derived `claude/<type>` event.
+Later byte-identical occurrences become deterministic, line-scoped
+`lore/pointer` events targeting it; differing occurrences become
+`lore/annotation` events that retain the complete source record and target the
+same canonical event. This preserves every physical occurrence without
+weakening same-id conflict verification or breaking `parentUuid` lineage.
+V1 output from an interrupted Claude import must be regenerated from raw JSONL
+before use; Codex identities are unchanged.
+
 The earlier basename-only tree-import behavior never produced importer output
 found in the v1-cutover audit of this workstation's home directory (excluding
 macOS's system-managed `Library` tree): no `.lync` event was attributed to

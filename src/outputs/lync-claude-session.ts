@@ -15,24 +15,32 @@
  *
  * - IDS. The reference reuses the source record's `uuid` as the event id and
  *   mints uuid7 for records without one (nondeterministic — re-import would
- *   fork ids). Here EVERY event id is a deterministic UUIDv8 via
- *   deterministicLyncId: records with a source uuid derive from
- *   ("claude", "record", uuid) — parents map `parentUuid` through the same
- *   recipe, so linkage survives — and records without one derive from
- *   ("claude", "line", sessionLocator, lineNo). Re-import is a union no-op.
+ *   fork ids). Real Claude journals repeat UUIDs, both within one subagent
+ *   file and across compacted/copy files. A UUID therefore identifies a
+ *   claimed logical record, not one physical observation. The first UUID
+ *   occurrence in deterministic tree order remains the canonical
+ *   `claude/<type>` event. Later byte-identical occurrences become line-scoped
+ *   `lore/pointer` events; differing occurrences become `lore/annotation`
+ *   events carrying the complete source record. Both target the canonical
+ *   event. Thus every physical occurrence survives, parentUuid retains its
+ *   stable canonical target, verification stays strict, and re-import is a
+ *   union no-op.
  * - TIME. The reference substitutes import-time "now" for missing
  *   timestamps and stamps `marked` on every event, which breaks byte
  *   determinism. Here the fallback is deterministic (opts.markedAt when
  *   given, else the epoch), every substitution is recorded in
  *   stats.timestampFallbacks, and `marked` is OPT-IN.
  *
- * Event mapping (as the reference defines it):
- * - record WITH uuid → kind `claude/<type>`; parents [parentUuid-derived id];
+ * Event mapping (reference mapping plus explicit repeat representation):
+ * - first record WITH uuid → kind `claude/<type>`; parents [parentUuid-derived id];
  *   payload { message, source: {path, line, sessionId, promptId, requestId,
  *   agentId, isSidechain, isCompactSummary, compactMetadata — null/absent
  *   dropped}, extra: every other source field }. Nothing is discarded: every
  *   source field lands in message/source/extra or is transcribed to the
  *   envelope (uuid → id, parentUuid → parents, type → kind, timestamp → at).
+ * - repeated uuid → line-scoped `lore/pointer` when source bytes equal the
+ *   canonical occurrence, otherwise `lore/annotation` carrying the complete
+ *   differing record; both parent and target the canonical uuid event.
  * - record WITHOUT uuid → kind `lore/pointer` for {ai-title, last-prompt,
  *   mode}, else `lore/annotation`; parents []; payload { label, name,
  *   target: sessionId, source, record: extra, message }.
@@ -49,6 +57,7 @@
  */
 
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 
 import type { LyncEventBody } from "@deepfates/lync/events";
 
@@ -76,6 +85,12 @@ import {
 
 export const CLAUDE_SESSION_IMPORTER = "claude-session-import";
 
+/**
+ * Versioned recipe for physical repeats of UUID-bearing records. The canonical
+ * first occurrence retains the longstanding UUID-only id.
+ */
+export const CLAUDE_REPEAT_ID_SCHEMA = "splice-claude-repeat/v2";
+
 /** Sidecar record types the reference maps to `lore/pointer`. */
 export const CLAUDE_POINTER_TYPES = new Set(["ai-title", "last-prompt", "mode"]);
 
@@ -91,6 +106,12 @@ export interface ClaudeSessionLyncStats {
   emitted: number;
   /** Records whose id derives from their source `uuid`. */
   uuidRecords: number;
+  /** First observed records retaining their canonical UUID-derived id. */
+  canonicalUuidRecords: number;
+  /** Later byte-identical occurrences represented as lore/pointer events. */
+  identicalUuidRepeats: number;
+  /** Later differing occurrences represented as lore/annotation events. */
+  variantUuidRepeats: number;
   /** uuid-less sidecar records whose id derives from (locator, line). */
   derivedRecords: number;
   skipped: LyncSkippedRecord[];
@@ -105,9 +126,24 @@ export interface ClaudeSessionLyncResult {
 
 /* ------------------------------ Deterministic ids ------------------------- */
 
-/** Event id for a record that carries its own source `uuid`. */
+/** Canonical event id for a record that carries its own source `uuid`. */
 export function claudeRecordEventId(uuid: string): string {
   return deterministicLyncId("claude", "record", uuid);
+}
+
+/** Event id for a later physical occurrence of a UUID-bearing record. */
+export function claudeRepeatEventId(
+  uuid: string,
+  sessionLocator: string,
+  lineNo: number,
+): string {
+  return deterministicLyncId(
+    "claude",
+    CLAUDE_REPEAT_ID_SCHEMA,
+    uuid,
+    sessionLocator,
+    String(lineNo),
+  );
 }
 
 /** Event id for a uuid-less sidecar record: (session file identity, line). */
@@ -209,9 +245,23 @@ export interface ClaudeSessionLineMapper extends SessionLineMapper {
   stats(): ClaudeSessionLyncStats;
 }
 
+interface ClaudeUuidRegistryEntry {
+  digest: string;
+  eventId: string;
+}
+
+interface ClaudeUuidRegistry {
+  byUuid: Map<string, ClaudeUuidRegistryEntry>;
+}
+
+function createClaudeUuidRegistry(): ClaudeUuidRegistry {
+  return { byUuid: new Map() };
+}
+
 export function createClaudeSessionLineMapper(
   sessionLocator: string,
   opts: ClaudeSessionOptions = {},
+  registry: ClaudeUuidRegistry = createClaudeUuidRegistry(),
 ): ClaudeSessionLineMapper {
   const sourceRef = opts.sourceRef ?? sessionLocator;
   const skipped: LyncSkippedRecord[] = [];
@@ -221,6 +271,9 @@ export function createClaudeSessionLineMapper(
   let sourceLines = 0;
   let emitted = 0;
   let uuidRecords = 0;
+  let canonicalUuidRecords = 0;
+  let identicalUuidRepeats = 0;
+  let variantUuidRepeats = 0;
   let derivedRecords = 0;
 
   function stats(): ClaudeSessionLyncStats {
@@ -228,6 +281,9 @@ export function createClaudeSessionLineMapper(
       sourceLines,
       emitted,
       uuidRecords,
+      canonicalUuidRecords,
+      identicalUuidRepeats,
+      variantUuidRepeats,
       derivedRecords,
       skipped,
       timestampFallbacks,
@@ -289,18 +345,49 @@ export function createClaudeSessionLineMapper(
       if (typeof uuid === "string" && uuid.length > 0) {
         uuidRecords++;
         const parent = rec["parentUuid"];
-        ev = {
-          v: 1,
-          id: claudeRecordEventId(uuid),
-          kind: `claude/${kindType}`,
-          at,
-          author,
-          parents:
-            typeof parent === "string" && parent.length > 0
-              ? [claudeRecordEventId(parent)]
-              : [],
-          payload: { message, source: sourceBlock, extra },
-        };
+        const canonicalId = claudeRecordEventId(uuid);
+        const digest = createHash("sha256").update(text).digest("hex");
+        const prior = registry.byUuid.get(uuid);
+        if (prior === undefined) {
+          canonicalUuidRecords++;
+          registry.byUuid.set(uuid, { digest, eventId: canonicalId });
+          ev = {
+            v: 1,
+            id: canonicalId,
+            kind: `claude/${kindType}`,
+            at,
+            author,
+            parents:
+              typeof parent === "string" && parent.length > 0
+                ? [claudeRecordEventId(parent)]
+                : [],
+            payload: { message, source: sourceBlock, extra },
+          };
+        } else {
+          const identical = prior.digest === digest;
+          if (identical) identicalUuidRepeats++;
+          else variantUuidRepeats++;
+          ev = {
+            v: 1,
+            id: claudeRepeatEventId(uuid, sessionLocator, lineNo),
+            kind: identical ? "lore/pointer" : "lore/annotation",
+            at,
+            author,
+            parents: [prior.eventId],
+            payload: {
+              label: identical
+                ? "claude/repeated-record"
+                : "claude/record-variant",
+              name: identical
+                ? "claude/repeated-record"
+                : "claude/record-variant",
+              target: prior.eventId,
+              source_uuid: uuid,
+              source: sourceBlock,
+              ...(identical ? {} : { record: rec }),
+            },
+          };
+        }
       } else {
         derivedRecords++;
         ev = {
@@ -399,10 +486,11 @@ export async function convertClaudeSessionTreeToLync(
   outputDir: string,
   opts: ClaudeSessionOptions = {},
 ): Promise<SessionTreeLyncResult> {
+  const registry = createClaudeUuidRegistry();
   return convertSessionTreeToLync(inputDir, outputDir, (locator, rel) =>
     createClaudeSessionLineMapper(locator, {
       sourceRef: opts.sourceRef ?? rel,
       ...opts,
-    }),
+    }, registry),
   );
 }
