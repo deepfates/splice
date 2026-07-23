@@ -26,6 +26,7 @@ async function syntheticArchive(root: string): Promise<void> {
     { timestamp: "2026-01-01T00:00:01.000Z", type: "event_msg", payload: { type: "user_message", message: "literal needle phrase from codex" } },
     { timestamp: "2026-01-01T00:00:02.000Z", type: "response_item", payload: { type: "function_call_output", output: "secret tool needle phrase" } },
     { timestamp: "2026-01-01T00:00:03.000Z", type: "response_item", payload: { type: "message", role: "developer", content: [{ type: "input_text", text: "secret system needle phrase" }] } },
+    { timestamp: "2026-01-01T00:00:04.000Z", type: "response_item", payload: { type: "agent_message", content: [{ type: "input_text", text: "modern agent content phrase" }, { type: "encrypted_content", encrypted_content: "private" }] } },
     { type: "message", role: "user", content: [{ type: "input_text", text: "legacy envelope phrase" }] },
   ].map(JSON.stringify).join("\n") + "\n";
   await writeLyncFile(
@@ -108,10 +109,10 @@ describe("private agent-session search projection", () => {
       expect(first.manifest).toMatchObject({
         schema: SESSION_SEARCH_SCHEMA,
         files: { discovered: 2, indexed: 2, failed: 0 },
-        events: { seen: 7, searchable: 4, nonSearchable: 3, errors: 0 },
-        union: { identitiesSeen: 7, unique: 7, identicalDuplicates: 0 },
-        messageSegments: 4,
-        messages: 4,
+        events: { seen: 8, searchable: 5, nonSearchable: 3, errors: 0 },
+        union: { identitiesSeen: 8, unique: 8, identicalDuplicates: 0 },
+        messageSegments: 5,
+        messages: 5,
       });
       expect(first.manifest.sourceFiles.map((file) => file.locator)).toEqual([
         "a-claude.lync", "z-codex.lync",
@@ -160,8 +161,19 @@ describe("private agent-session search projection", () => {
       }))).toEqual([{
         platform: "codex",
         role: "user",
-        line: 5,
+        line: 6,
         text: "legacy envelope phrase",
+      }]);
+      expect((await searchSessionIndex(output, "modern agent content phrase")).map((hit) => ({
+        platform: hit.platform,
+        role: hit.role,
+        line: hit.line,
+        text: hit.text,
+      }))).toEqual([{
+        platform: "codex",
+        role: "assistant",
+        line: 5,
+        text: "modern agent content phrase",
       }]);
       expect(await searchSessionIndex(output, "Literal needle phrase")).toEqual([]);
       expect(await searchSessionIndex(output, "' OR 1=1 --")).toEqual([]);

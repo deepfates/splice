@@ -222,10 +222,14 @@ function extractCodex(event: JsonRecord, knownSessionId: string | null): Extract
   let content: unknown;
   if (kind === "codex/user_message") {
     role = "user";
-    content = original["message"];
+    content = Object.prototype.hasOwnProperty.call(original, "message")
+      ? original["message"]
+      : original["content"];
   } else if (kind === "codex/agent_message") {
     role = "assistant";
-    content = original["message"];
+    content = Object.prototype.hasOwnProperty.call(original, "message")
+      ? original["message"]
+      : original["content"];
   } else {
     if (original["role"] === "system" || original["role"] === "developer") {
       return { status: "non-searchable", reason: "privacy-filtered-system-or-developer-message" };
