@@ -26,6 +26,9 @@ async function syntheticArchive(root: string): Promise<void> {
     { timestamp: "2026-01-01T00:00:01.000Z", type: "event_msg", payload: { type: "user_message", message: "literal needle phrase from codex" } },
     { timestamp: "2026-01-01T00:00:02.000Z", type: "response_item", payload: { type: "function_call_output", output: "secret tool needle phrase" } },
     { timestamp: "2026-01-01T00:00:03.000Z", type: "response_item", payload: { type: "message", role: "developer", content: [{ type: "input_text", text: "secret system needle phrase" }] } },
+    { timestamp: "2026-01-01T00:00:04.000Z", type: "response_item", payload: { type: "agent_message", content: [{ type: "input_text", text: "modern agent content phrase" }, { type: "encrypted_content", encrypted_content: "private" }] } },
+    { timestamp: "2026-01-01T00:00:05.000Z", type: "response_item", payload: { type: "agent_message", content: [{ type: "output_text", text: "" }] } },
+    { type: "message", role: "user", content: [{ type: "input_text", text: "legacy envelope phrase" }] },
   ].map(JSON.stringify).join("\n") + "\n";
   await writeLyncFile(
     path.join(root, "z-codex.lync"),
@@ -107,10 +110,10 @@ describe("private agent-session search projection", () => {
       expect(first.manifest).toMatchObject({
         schema: SESSION_SEARCH_SCHEMA,
         files: { discovered: 2, indexed: 2, failed: 0 },
-        events: { seen: 6, searchable: 3, nonSearchable: 3, errors: 0 },
-        union: { identitiesSeen: 6, unique: 6, identicalDuplicates: 0 },
-        messageSegments: 3,
-        messages: 3,
+        events: { seen: 9, searchable: 5, nonSearchable: 4, errors: 0 },
+        union: { identitiesSeen: 9, unique: 9, identicalDuplicates: 0 },
+        messageSegments: 5,
+        messages: 5,
       });
       expect(first.manifest.sourceFiles.map((file) => file.locator)).toEqual([
         "a-claude.lync", "z-codex.lync",
@@ -151,6 +154,28 @@ describe("private agent-session search projection", () => {
       expect(await searchSessionIndex(output, "secret tool")).toEqual([]);
       expect(await searchSessionIndex(output, "secret system")).toEqual([]);
       expect(await searchSessionIndex(output, "secret reasoning")).toEqual([]);
+      expect((await searchSessionIndex(output, "legacy envelope phrase")).map((hit) => ({
+        platform: hit.platform,
+        role: hit.role,
+        line: hit.line,
+        text: hit.text,
+      }))).toEqual([{
+        platform: "codex",
+        role: "user",
+        line: 7,
+        text: "legacy envelope phrase",
+      }]);
+      expect((await searchSessionIndex(output, "modern agent content phrase")).map((hit) => ({
+        platform: hit.platform,
+        role: hit.role,
+        line: hit.line,
+        text: hit.text,
+      }))).toEqual([{
+        platform: "codex",
+        role: "assistant",
+        line: 5,
+        text: "modern agent content phrase",
+      }]);
       expect(await searchSessionIndex(output, "Literal needle phrase")).toEqual([]);
       expect(await searchSessionIndex(output, "' OR 1=1 --")).toEqual([]);
       await expect(searchSessionIndex(output, "ab")).rejects.toThrow(/at least 3/);
@@ -171,6 +196,13 @@ describe("private agent-session search projection", () => {
       const archive = path.join(tmp, "authority");
       const output = path.join(tmp, "projection");
       await fs.mkdir(archive);
+      await fs.mkdir(path.join(output, ".stage-abandoned", "source-snapshots"), {
+        recursive: true,
+      });
+      await fs.writeFile(
+        path.join(output, ".stage-abandoned", "index.sqlite3"),
+        "interrupted build",
+      );
       await scaledArchive(archive);
       const first = rebuildSessionSearchIndex(archive, output, { batchRows: 64, batchBytes: 64 * 1024 });
       await waitFor(path.join(output, ".rebuild.lock"));
@@ -185,6 +217,12 @@ describe("private agent-session search projection", () => {
       });
       expect(built.manifest.build.peakBatchRows).toBeLessThanOrEqual(64);
       expect(built.manifest.build.peakBatchBytes).toBeLessThanOrEqual(64 * 1024);
+      expect(built.manifest.build.peakIdentityBatchRows).toBeLessThanOrEqual(64);
+      expect(built.manifest.build.peakIdentityBatchBytes).toBeLessThanOrEqual(64 * 1024);
+      expect(built.manifest.build.messageFlushes).toBeGreaterThan(1);
+      expect(built.manifest.build.identityFlushes).toBeGreaterThan(1);
+      expect(built.manifest.build.oversizeMessageRows).toBe(0);
+      expect(built.manifest.build.staleStagesRemoved).toBe(1);
       expect(await fs.stat(path.join(output, ".rebuild.lock")).then(() => true, () => false)).toBe(false);
       expect((await fs.readdir(output)).some((name) => name.startsWith(".stage-"))).toBe(false);
     } finally {

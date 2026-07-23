@@ -93,6 +93,7 @@ describe("codex rollout JSONL → lync mapping", () => {
 
     expect(stats.sourceLines).toBe(10);
     expect(stats.recordEvents).toBe(7);
+    expect(stats.legacyTopLevelRecords).toBe(0);
     expect(stats.lineagePointers).toBe(1);
     expect(stats.emitted).toBe(8);
     expect(stats.skipped).toHaveLength(3);
@@ -190,6 +191,28 @@ describe("codex rollout JSONL → lync mapping", () => {
     expect(reasoningEv.at).toBe(new Date(0).toISOString());
     expect(stats.timestampFallbacks.map((f) => f.index)).toEqual([7]);
     for (const ev of events) expect(ev.marked).toBeUndefined(); // marked OPT-IN
+  });
+
+  it("preserves and exposes pre-envelope top-level message records", () => {
+    const legacy = {
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: "legacy message text" }],
+    };
+    const { events, stats } = codexSessionToLyncEvents(
+      `${JSON.stringify(legacy)}\n`,
+      "legacy-rollout.jsonl",
+    );
+
+    expect(stats.legacyTopLevelRecords).toBe(1);
+    expect(events).toHaveLength(1);
+    expect(events[0].kind).toBe("codex/message");
+    expect(events[0].author.actor).toBe("deepfates");
+    expect(events[0].payload).toEqual({
+      record_type: "message",
+      payload: legacy,
+      source: { path: "legacy-rollout.jsonl", line: 1 },
+    });
   });
 
   it("re-import is a byte-identical no-op", async () => {

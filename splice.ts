@@ -3,23 +3,27 @@
  * Thin forwarder to the modular CLI.
  * This ensures `npx tsx splice.ts` runs the latest CLI (including checkpoints).
  *
- * In dev: loads TypeScript entry at src/cli/splice.ts
- * In build: falls back to compiled dist/cli/splice.js
+ * In dev: loads TypeScript entry at src/cli/splice.ts.
+ * In source-free package layouts: loads compiled dist/cli/splice.js.
+ *
+ * Do not catch an entrypoint's runtime failure and try the other one: doing so
+ * can mask a missing dependency or broken subcommand behind unrelated help.
  */
 
+import * as fs from "node:fs/promises";
+
+let hasSource = true;
 try {
-  // Prefer TypeScript entry during development
-  await import("./src/cli/splice.ts");
-} catch (errTs) {
-  try {
-    // Fallback to compiled JavaScript entry after build
-    await import("./dist/cli/splice.js");
-  } catch (errJs) {
-    const msgTs = (errTs && (errTs as Error).message) || String(errTs);
-    const msgJs = (errJs && (errJs as Error).message) || String(errJs);
-    console.error("[error] Failed to load CLI entry.");
-    console.error("  TS entry error:", msgTs);
-    console.error("  JS entry error:", msgJs);
-    process.exit(1);
+  await fs.access(new URL("./src/cli/splice.ts", import.meta.url));
+} catch (error) {
+  if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") {
+    throw error;
   }
+  hasSource = false;
+}
+
+if (hasSource) {
+  await import("./src/cli/splice.ts");
+} else {
+  await import("./dist/cli/splice.js");
 }

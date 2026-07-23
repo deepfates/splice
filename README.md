@@ -219,10 +219,26 @@ Examples:
     npx tsx splice.ts lync tweet-embed --source ../deep-space/.embed-cache/tweets --out ./out/embeds.lync
 
 Exit codes match the main CLI: 0 success, 1 runtime/verify error, 2 usage
-error. Future exporters (lync → training data, lync → markdown, session
-imports) will land as sibling subcommands here.
+error. Future exporters (lync → training data and lync → markdown) will land
+as sibling subcommands here.
 
 ### Agent-session importer identity and cutover
+
+Convert a complete Codex or Claude Code session tree with the direct private
+intake commands:
+
+```sh
+splice session-import codex --source ~/.codex/sessions --out ./private-lync/codex
+splice session-import claude --source ~/.claude/projects --out ./private-lync/claude
+```
+
+The source and output trees must not overlap. The JSON report names every
+converted JSONL file, every unreadable JSONL file, and every ignored non-JSONL
+entry. Any unreadable source makes the command exit nonzero after it prints the
+partial accounting report. Raw session JSONL remains authority; the generated
+lync tree is a deterministic, rebuildable normalization. Codex journals from
+before the current `{timestamp,type,payload}` envelope are preserved as
+top-level logical payloads rather than losing their role and message content.
 
 The Codex and Claude Code tree importers use the explicit deterministic-id
 schema `splice-session-tree/v1`. A source file's identity is its normalized,
@@ -230,6 +246,18 @@ root-relative path under the selected archive root, prefixed by that schema;
 the physical location of the copied archive is not identity. Human-readable
 `author.source` and payload paths remain root-relative. A breaking locator or
 id change must introduce a new schema value rather than silently reusing v1.
+
+Claude UUID-bearing records additionally use the repeat identity recipe
+`splice-claude-repeat/v2`. Real subagent and compaction journals can repeat one
+UUID within a file or copy it across files. The first occurrence in the
+byte-sorted tree remains the canonical UUID-derived `claude/<type>` event.
+Later byte-identical occurrences become deterministic, line-scoped
+`lore/pointer` events targeting it; differing occurrences become
+`lore/annotation` events that retain the complete source record and target the
+same canonical event. This preserves every physical occurrence without
+weakening same-id conflict verification or breaking `parentUuid` lineage.
+V1 output from an interrupted Claude import must be regenerated from raw JSONL
+before use; Codex identities are unchanged.
 
 The earlier basename-only tree-import behavior never produced importer output
 found in the v1-cutover audit of this workstation's home directory (excluding

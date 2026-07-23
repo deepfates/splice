@@ -93,6 +93,8 @@ export interface CodexSessionLyncStats {
   emitted: number;
   /** One per successfully mapped source line. */
   recordEvents: number;
+  /** Pre-envelope records whose complete top-level object is the payload. */
+  legacyTopLevelRecords: number;
   /** lore/pointer events derived from session_meta lineage keys. */
   lineagePointers: number;
   /** function_call_output events matched to their function_call by call_id. */
@@ -211,6 +213,7 @@ export function createCodexSessionLineMapper(
   const turnIds = new Set<string>();
   let sourceLines = 0;
   let recordEvents = 0;
+  let legacyTopLevelRecords = 0;
   let lineagePointers = 0;
   let functionPairs = 0;
   let previousId: string | undefined;
@@ -220,6 +223,7 @@ export function createCodexSessionLineMapper(
       sourceLines,
       emitted: recordEvents + lineagePointers,
       recordEvents,
+      legacyTopLevelRecords,
       lineagePointers,
       functionPairs,
       turns: turnIds.size,
@@ -257,7 +261,14 @@ export function createCodexSessionLineMapper(
     }
 
     const events: LyncEventBody[] = [];
-    const payload = rec["payload"];
+    // Early Codex rollout journals stored message/function records directly at
+    // the top level (`{type, role, content}`) before the current
+    // `{timestamp, type, payload}` envelope existed. Treating their absent
+    // payload as null silently discarded the message text. Preserve the whole
+    // legacy record as its logical payload; modern envelopes are unchanged.
+    const hasPayloadEnvelope = Object.prototype.hasOwnProperty.call(rec, "payload");
+    const payload = hasPayloadEnvelope ? rec["payload"] : rec;
+    if (!hasPayloadEnvelope) legacyTopLevelRecords++;
     const payloadObj = asObject(payload);
     const eventId = codexLineEventId(sessionLocator, lineNo);
     const parents: string[] = previousId ? [previousId] : [];

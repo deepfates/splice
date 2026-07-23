@@ -276,6 +276,8 @@ export function usage(): string {
     "         see `splice lync --help` for commands and options",
     "  splice session-search <rebuild|find> [options]",
     "         Rebuild/query the private Codex/Claude session projection; see `splice session-search --help`",
+    "  splice session-import <codex|claude> --source <dir> --out <dir>",
+    "         Convert a private agent-session tree to deterministic lync; see `splice session-import --help`",
     "",
     "Options:",
     "  --source <path>            Path to the Twitter archive directory",

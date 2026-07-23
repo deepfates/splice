@@ -4,14 +4,17 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import {
+  CLAUDE_REPEAT_ID_SCHEMA,
   CLAUDE_SESSION_IMPORTER,
   claudeLineEventId,
   claudeRecordEventId,
+  claudeRepeatEventId,
   claudeSessionToLyncEvents,
   convertClaudeSessionToLync,
   convertClaudeSessionTreeToLync,
 } from "../../src/outputs/lync-claude-session.js";
 import { verifyLyncFile } from "../../src/outputs/lync.js";
+import { rebuildSessionSearchIndex } from "../../src/outputs/lync-session-search.js";
 import {
   SESSION_TREE_IMPORT_SCHEMA,
   sessionTreeIdentityLocator,
@@ -91,6 +94,9 @@ describe("claude session JSONL → lync mapping", () => {
     expect(stats.sourceLines).toBe(7);
     expect(stats.emitted).toBe(4);
     expect(stats.uuidRecords).toBe(2);
+    expect(stats.canonicalUuidRecords).toBe(2);
+    expect(stats.identicalUuidRepeats).toBe(0);
+    expect(stats.variantUuidRepeats).toBe(0);
     expect(stats.derivedRecords).toBe(2);
     expect(stats.skipped).toHaveLength(3);
     expect(stats.emitted + stats.skipped.length).toBe(stats.sourceLines);
@@ -135,6 +141,91 @@ describe("claude session JSONL → lync mapping", () => {
     expect(pointer.id).toBe(claudeLineEventId(LOCATOR, 3));
     expect(annotation.id).toBe(claudeLineEventId(LOCATOR, 4));
     expect(pointer.parents).toEqual([]);
+  });
+
+  it("preserves repeated UUID observations as strict line-scoped pointers and annotations", async () => {
+    const root = {
+      type: "user",
+      uuid: USER_UUID,
+      parentUuid: null,
+      sessionId: SESSION_ID,
+      timestamp: "2026-01-02T03:04:05.678Z",
+      message: { role: "user", content: "canonical prompt" },
+    };
+    const childA = {
+      type: "assistant",
+      uuid: ASSISTANT_UUID,
+      parentUuid: USER_UUID,
+      sessionId: SESSION_ID,
+      timestamp: "2026-01-02T03:04:06.000Z",
+      message: { role: "assistant", model: "claude-synthetic", content: "first answer" },
+    };
+    const variant = {
+      ...root,
+      message: { role: "user", content: "differing prompt variant" },
+    };
+    const childB = {
+      ...childA,
+      uuid: "aaaaaaaa-0000-4000-8000-000000000003",
+      message: { role: "assistant", model: "claude-synthetic", content: "later answer" },
+    };
+    const duplicateFixture = [root, childA, root, variant, childB]
+      .map(JSON.stringify)
+      .join("\n") + "\n";
+
+    const { events, stats } = claudeSessionToLyncEvents(duplicateFixture, LOCATOR);
+    expect(stats).toMatchObject({
+      sourceLines: 5,
+      emitted: 5,
+      uuidRecords: 5,
+      canonicalUuidRecords: 3,
+      identicalUuidRepeats: 1,
+      variantUuidRepeats: 1,
+    });
+    expect(stats.emitted + stats.skipped.length).toBe(stats.sourceLines);
+
+    const [canonical, firstChild, repeated, differing, laterChild] = events;
+    expect(canonical.id).toBe(claudeRecordEventId(USER_UUID));
+    expect(firstChild.parents).toEqual([canonical.id]);
+    expect(repeated).toMatchObject({
+      id: claudeRepeatEventId(USER_UUID, LOCATOR, 3),
+      kind: "lore/pointer",
+      parents: [canonical.id],
+      payload: {
+        label: "claude/repeated-record",
+        target: canonical.id,
+        source_uuid: USER_UUID,
+        source: { path: LOCATOR, line: 3 },
+      },
+    });
+    expect(repeated.payload).not.toHaveProperty("record");
+    expect(differing).toMatchObject({
+      id: claudeRepeatEventId(USER_UUID, LOCATOR, 4),
+      kind: "lore/annotation",
+      parents: [canonical.id],
+      payload: {
+        label: "claude/record-variant",
+        target: canonical.id,
+        source_uuid: USER_UUID,
+        source: { path: LOCATOR, line: 4 },
+        record: variant,
+      },
+    });
+    expect(laterChild.parents).toEqual([canonical.id]);
+    expect(CLAUDE_REPEAT_ID_SCHEMA).toBe("splice-claude-repeat/v2");
+
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "splice-claude-repeats-"));
+    try {
+      const input = path.join(dir, LOCATOR);
+      const output = path.join(dir, "repeats.lync");
+      await fs.writeFile(input, duplicateFixture);
+      const converted = await convertClaudeSessionToLync(input, output, { sourceRef: LOCATOR });
+      expect(converted.verify.ok).toBe(true);
+      expect(converted.verify.counts.accepted).toBe(5);
+      expect(converted.verify.counts.events).toBe(5);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("author envelope: original actor stays the actor; the importer never is", () => {
@@ -302,6 +393,65 @@ describe("claude session JSONL → lync mapping", () => {
 });
 
 describe("claude session tree batch: zero silent drops at the file level", () => {
+  it("deduplicates UUID claims across files without conflict while preserving every occurrence", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "splice-claude-cross-file-"));
+    const out = await fs.mkdtemp(path.join(os.tmpdir(), "splice-claude-cross-file-out-"));
+    const search = await fs.mkdtemp(path.join(os.tmpdir(), "splice-claude-cross-file-search-"));
+    const repeated = {
+      type: "user",
+      uuid: USER_UUID,
+      parentUuid: null,
+      sessionId: SESSION_ID,
+      timestamp: "2026-01-02T03:04:05.678Z",
+      message: { role: "user", content: "cross-file canonical prompt" },
+    };
+    const child = {
+      type: "assistant",
+      uuid: ASSISTANT_UUID,
+      parentUuid: USER_UUID,
+      sessionId: SESSION_ID,
+      timestamp: "2026-01-02T03:04:06.789Z",
+      message: { role: "assistant", model: "claude-synthetic", content: "cross-file answer" },
+    };
+    try {
+      await fs.writeFile(path.join(root, "a.jsonl"), `${JSON.stringify(repeated)}\n`);
+      await fs.writeFile(
+        path.join(root, "b.jsonl"),
+        [repeated, { ...repeated, message: { role: "user", content: "cross-file variant" } }, child]
+          .map(JSON.stringify)
+          .join("\n") + "\n",
+      );
+
+      const result = await convertClaudeSessionTreeToLync(root, out);
+      expect(result).toMatchObject({ filesDiscovered: 2, filesConverted: 2, totalEmitted: 4, totalAccepted: 4 });
+      const bEvents = (await fs.readFile(path.join(out, "b.lync"), "utf8"))
+        .trim()
+        .split("\n")
+        .map(JSON.parse);
+      expect(bEvents.map((event) => event.kind)).toEqual([
+        "lore/pointer",
+        "lore/annotation",
+        "claude/assistant",
+      ]);
+      expect(bEvents[2].parents).toEqual([claudeRecordEventId(USER_UUID)]);
+
+      // The search builder performs the strict cross-file union check. It
+      // must accept all four observations rather than weakening verification.
+      const indexed = await rebuildSessionSearchIndex(out, search);
+      expect(indexed.manifest.errors).toEqual([]);
+      expect(indexed.manifest.union).toEqual({
+        identitiesSeen: 4,
+        unique: 4,
+        identicalDuplicates: 0,
+      });
+      expect(indexed.manifest.events.seen).toBe(4);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+      await fs.rm(out, { recursive: true, force: true });
+      await fs.rm(search, { recursive: true, force: true });
+    }
+  });
+
   it("gives same-named workflow journals distinct root-relative identities", async () => {
     const root = await fs.mkdtemp(
       path.join(os.tmpdir(), "splice-claude-workflows-"),
