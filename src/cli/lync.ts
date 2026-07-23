@@ -72,6 +72,13 @@ import {
   convertTwitterArchiveToLoomFiles,
   type TwitterThreadsStats,
 } from "../outputs/lync-twitter-threads.js";
+import {
+  convertLyncToMarkdown,
+} from "../outputs/lync-markdown.js";
+import {
+  convertLyncToTrainingData,
+  type LyncTrainingRendering,
+} from "../outputs/lync-training.js";
 
 /* --------------------------------- Types ---------------------------------- */
 
@@ -80,6 +87,8 @@ const LYNC_COMMANDS = [
   "glowfic",
   "ocr",
   "tweet-embed",
+  "markdown",
+  "training",
   "session-loom",
   "claudeai-export",
   "chatgpt-export",
@@ -89,6 +98,7 @@ type LyncCommand = (typeof LYNC_COMMANDS)[number];
 
 /** Loom commands that fan one input into MANY snapshots need `--out-dir`. */
 const DIR_OUTPUT_COMMANDS = new Set<LyncCommand>([
+  "training",
   "claudeai-export",
   "chatgpt-export",
   "twitter-threads",
@@ -112,6 +122,8 @@ interface LyncCliOptions {
   assistantActor?: string;
   ownerHandle?: string;
   title?: string;
+  head?: string;
+  renderings?: LyncTrainingRendering[];
 }
 
 /** What every command prints to stdout: the stats block, nothing hidden. */
@@ -168,6 +180,8 @@ export function lyncUsage(): string {
     "",
     "Usage:",
     "  splice lync <command> --source <path> --out <file.lync> [options]",
+    "  splice lync markdown --source <file.lync> --out <file.md> [--head <event-id>]",
+    "  splice lync training --source <file.lync> --out-dir <dir> [--render plain|messages]",
     "  splice lync session-loom     --source <session.jsonl> --out <file.loom.json>",
     "  splice lync claudeai-export  --source <conversations.json> --out-dir <dir>",
     "  splice lync chatgpt-export   --source <conversations.json> --out-dir <dir>",
@@ -178,6 +192,8 @@ export function lyncUsage(): string {
     "  glowfic          glowfic-dl JSON export (thread.json) → .lync",
     "  ocr              OCR page-set directory (page-NNN.txt, page-NNN.desc.txt, *.md) → .lync",
     "  tweet-embed      tweet embed cache directory (<tweetid>-light.json oEmbed files) → .lync",
+    "  markdown         Raw .lync event union → readable Markdown (ids are never reminted)",
+    "  training         Raw .lync event union → SFT/preference JSONL",
     "  session-loom     Claude Code session (.jsonl) → one conversation .loom.json textile opens",
     "  claudeai-export  Claude.ai export (conversations.json) → one .loom.json per chat",
     "  chatgpt-export   ChatGPT export (conversations.json) → one .loom.json per chat",
@@ -203,6 +219,8 @@ export function lyncUsage(): string {
     "  --owner-handle <name>      The archive owner's screen name (twitter-threads; default:",
     "                             read from account.js, else a sentinel — all tweets = owner)",
     "  --title <text>             Human title stamped into the loom meta (session-loom)",
+    "  --head <event-id>          Explicit main-thread head (markdown)",
+    "  --render <format>          Additional training rendering: plain or messages (repeatable)",
     "  --dry-run, -n              Map and report stats; don't write any output file",
     "  --log-level <level>        debug|info|warn|error (default: info)",
     "  --quiet, -q                Errors only",
@@ -223,6 +241,8 @@ export function lyncUsage(): string {
     "  splice lync glowfic --source ./thread.json --out ./out/thread-5506.lync",
     "  splice lync ocr --source ../deep-space/data/signal-ocr --out ./out/signal-ocr.lync",
     "  splice lync tweet-embed --source ../deep-space/.embed-cache/tweets --out ./out/embeds.lync",
+    "  splice lync markdown --source ./corpus.lync --out ./out/corpus.md",
+    "  splice lync training --source ./corpus.lync --out-dir ./out/training --render messages",
     "  splice lync session-loom --source ~/.claude/projects/<id>/<sessionId>.jsonl --out ./out/session.loom.json",
     "  splice lync claudeai-export --source ~/Downloads/conversations.json --out-dir ./out/claudeai-looms",
     "  splice lync chatgpt-export --source ~/Downloads/conversations.json --out-dir ./out/chatgpt-looms",
@@ -269,6 +289,8 @@ const COMMAND_FLAGS: Record<LyncCommand, Set<string>> = {
   glowfic: new Set(LYNC_PROVENANCE_FLAGS),
   ocr: new Set([...LYNC_PROVENANCE_FLAGS, "--actor", "--set-locator"]),
   "tweet-embed": new Set([...LYNC_PROVENANCE_FLAGS, "--archive-ids-file"]),
+  markdown: new Set(["--out", "--head", "--title"]),
+  training: new Set(["--out-dir", "--render"]),
   "session-loom": new Set([
     "--out",
     "--operator",
@@ -343,6 +365,14 @@ function parseLyncArgs(
       opts.ownerHandle = takeValue(a, i++);
     } else if (a === "--title") {
       opts.title = takeValue(a, i++);
+    } else if (a === "--head") {
+      opts.head = takeValue(a, i++);
+    } else if (a === "--render") {
+      const rendering = takeValue(a, i++);
+      if (rendering !== "plain" && rendering !== "messages") {
+        usageError(`--render must be plain or messages (got "${rendering}")`);
+      }
+      opts.renderings = [...(opts.renderings ?? []), rendering];
     } else if (a === "--operator") {
       opts.operator = takeValue(a, i++);
     } else if (a === "--via") {
@@ -974,6 +1004,55 @@ async function runTwitterThreads(
   return report;
 }
 
+async function runMarkdown(
+  opts: LyncCliOptions,
+  logger: Logger,
+): Promise<LyncCliReport> {
+  const source = path.resolve(opts.source as string);
+  const out = path.resolve(opts.out as string);
+  if (opts.dryRun) {
+    throw new Error("lync markdown does not support --dry-run; export is a read-only projection");
+  }
+  const result = await convertLyncToMarkdown(source, out, {
+    head: opts.head,
+    title: opts.title,
+  });
+  logger("info", `Wrote Markdown projection to ${out}`);
+  return {
+    command: "lync markdown",
+    source,
+    out,
+    dryRun: false,
+    headId: result.headId,
+    mainThread: result.mainThread,
+    rule: result.rule,
+    stats: result.stats,
+  };
+}
+
+async function runTraining(
+  opts: LyncCliOptions,
+  logger: Logger,
+): Promise<LyncCliReport> {
+  const source = path.resolve(opts.source as string);
+  const out = path.resolve(opts.outDir as string);
+  if (opts.dryRun) {
+    throw new Error("lync training does not support --dry-run; export is a read-only projection");
+  }
+  const result = await convertLyncToTrainingData([source], out, {
+    renderings: opts.renderings,
+  });
+  logger("info", `Wrote ${result.written.length} training artifact(s) to ${out}`);
+  return {
+    command: "lync training",
+    source,
+    out,
+    dryRun: false,
+    written: result.written,
+    stats: result.stats,
+  };
+}
+
 /* ---------------------------------- Main ----------------------------------- */
 
 /**
@@ -1016,6 +1095,8 @@ export async function runLync(argv: string[]): Promise<never> {
     else if (command === "glowfic") report = await runGlowfic(opts, logger);
     else if (command === "ocr") report = await runOcr(opts, logger);
     else if (command === "tweet-embed") report = await runTweetEmbed(opts, logger);
+    else if (command === "markdown") report = await runMarkdown(opts, logger);
+    else if (command === "training") report = await runTraining(opts, logger);
     else if (command === "session-loom") report = await runSessionLoom(opts, logger);
     else if (command === "claudeai-export")
       report = await runClaudeAiExport(opts, logger);

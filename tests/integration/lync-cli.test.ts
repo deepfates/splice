@@ -33,6 +33,11 @@ const embedCacheFixture = path.resolve(
   projectRoot,
   "tests/fixtures/tweet-embed-cache",
 );
+const markdownFixture = path.resolve(projectRoot, "tests/fixtures/lync-md/loom.lync");
+const trainingFixture = path.resolve(
+  projectRoot,
+  "tests/fixtures/lync-training/fixture.lync",
+);
 
 // Real archives via the existing ../deep-space convention (see
 // tests/lync/ocr-pages.test.ts and tweet-embed.test.ts); the real-archive
@@ -89,6 +94,8 @@ describe("splice lync CLI", () => {
         "glowfic",
         "ocr",
         "tweet-embed",
+        "markdown",
+        "training",
         "session-loom",
         "claudeai-export",
         "chatgpt-export",
@@ -108,6 +115,8 @@ describe("splice lync CLI", () => {
         "--user-actor",
         "--assistant-actor",
         "--title",
+        "--head",
+        "--render",
         "--dry-run",
       ]) {
         expect(stderr).toContain(flag);
@@ -174,6 +183,42 @@ describe("splice lync CLI", () => {
       ]);
       expect(r.exitCode).toBe(1);
       expect(r.stderr).toContain("[error]");
+    });
+  });
+
+  describe("raw lync exports", () => {
+    it("projects raw events to Markdown without minting a loom", async () => {
+      const out = path.join(outDir, "corpus.md");
+      const report = await runLyncOk([
+        "markdown",
+        "--source",
+        markdownFixture,
+        "--out",
+        out,
+      ]);
+      expect(report.command).toBe("lync markdown");
+      expect(report.stats.accepted).toBe(12);
+      expect(report.mainThread.length).toBeGreaterThan(0);
+      expect(await fs.readFile(out, "utf8")).toContain(report.headId.slice(0, 8));
+    });
+
+    it("projects raw events and standard selections to training rows", async () => {
+      const target = path.join(outDir, "training-export");
+      const report = await runLyncOk([
+        "training",
+        "--source",
+        trainingFixture,
+        "--out-dir",
+        target,
+        "--render",
+        "messages",
+      ]);
+      expect(report.command).toBe("lync training");
+      expect(report.stats.sft_rows).toBe(2);
+      expect(report.stats.preference_rows).toBe(1);
+      expect(report.written).toContain("sft.messages.jsonl");
+      expect(await fs.readFile(path.join(target, "preferences.jsonl"), "utf8"))
+        .toContain('"selection_event"');
     });
   });
 
