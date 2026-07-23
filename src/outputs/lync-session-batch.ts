@@ -179,6 +179,10 @@ export async function scanSessionTree(dir: string): Promise<SessionTreeScan> {
         const rel = path.relative(dir, full);
         if (entry.name.endsWith(".jsonl")) jsonlFiles.push(rel);
         else ignoredFiles.push(rel);
+      } else {
+        // Symlinks, sockets, and other non-regular entries are deliberately
+        // not followed, but they still belong in the file-level accounting.
+        ignoredFiles.push(path.relative(dir, full));
       }
     }
   }

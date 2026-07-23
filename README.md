@@ -219,10 +219,24 @@ Examples:
     npx tsx splice.ts lync tweet-embed --source ../deep-space/.embed-cache/tweets --out ./out/embeds.lync
 
 Exit codes match the main CLI: 0 success, 1 runtime/verify error, 2 usage
-error. Future exporters (lync → training data, lync → markdown, session
-imports) will land as sibling subcommands here.
+error. Future exporters (lync → training data and lync → markdown) will land
+as sibling subcommands here.
 
 ### Agent-session importer identity and cutover
+
+Convert a complete Codex or Claude Code session tree with the direct private
+intake commands:
+
+```sh
+splice session-import codex --source ~/.codex/sessions --out ./private-lync/codex
+splice session-import claude --source ~/.claude/projects --out ./private-lync/claude
+```
+
+The source and output trees must not overlap. The JSON report names every
+converted JSONL file, every unreadable JSONL file, and every ignored non-JSONL
+entry. Any unreadable source makes the command exit nonzero after it prints the
+partial accounting report. Raw session JSONL remains authority; the generated
+lync tree is a deterministic, rebuildable normalization.
 
 The Codex and Claude Code tree importers use the explicit deterministic-id
 schema `splice-session-tree/v1`. A source file's identity is its normalized,
