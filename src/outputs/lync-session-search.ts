@@ -148,9 +148,7 @@ function publicTextParts(content: unknown):
   | { ok: true; texts: string[] }
   | { ok: false; reason: string } {
   if (typeof content === "string") {
-    return content.length > 0
-      ? { ok: true, texts: [content] }
-      : { ok: false, reason: "message text is empty" };
+    return { ok: true, texts: content.length > 0 ? [content] : [] };
   }
   if (!Array.isArray(content)) return { ok: false, reason: "message content is missing or invalid" };
   const texts: string[] = [];
@@ -160,10 +158,10 @@ function publicTextParts(content: unknown):
       return { ok: false, reason: "message content block is invalid" };
     }
     if (["text", "input_text", "output_text"].includes(block["type"])) {
-      if (typeof block["text"] !== "string" || block["text"].length === 0) {
+      if (typeof block["text"] !== "string") {
         return { ok: false, reason: "public message text block is missing text" };
       }
-      texts.push(block["text"]);
+      if (block["text"].length > 0) texts.push(block["text"]);
     }
     // All other block types are deliberately privacy-filtered.
   }
