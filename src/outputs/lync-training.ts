@@ -215,10 +215,27 @@ function eligibleIndex(result: LyncParseResult): Map<string, EligibleEvent> {
   return index;
 }
 
-/** An artifact for training purposes: any eligible event with string payload.text. */
+/** Read canonical artifact text without changing or reminting its source event. */
 function artifactText(ev: EligibleEvent): string | undefined {
-  const text = ev.event.payload["text"];
-  return typeof text === "string" ? text : undefined;
+  const payload = ev.event.payload;
+  const text = payload["text"];
+  if (typeof text === "string" && text.length > 0) return text;
+  const message = payload["message"];
+  if (typeof message === "string" && message.length > 0) return message;
+  if (!message || typeof message !== "object") return undefined;
+  const record = message as { text?: unknown; content?: unknown };
+  if (typeof record.text === "string" && record.text.length > 0) return record.text;
+  if (typeof record.content === "string" && record.content.length > 0) return record.content;
+  if (!Array.isArray(record.content)) return undefined;
+  const parts = record.content
+    .map((block) => {
+      if (typeof block === "string") return block;
+      if (!block || typeof block !== "object") return "";
+      const value = (block as { text?: unknown }).text;
+      return typeof value === "string" ? value : "";
+    })
+    .filter(Boolean);
+  return parts.length > 0 ? parts.join("") : undefined;
 }
 
 function toSegment(ev: EligibleEvent, text: string): LyncTrainingSegment {
@@ -385,7 +402,7 @@ export function lyncToTrainingData(result: LyncParseResult): LyncTrainingResult 
     }
     const text = artifactText(ev);
     if (text === undefined) {
-      skip(id, "ineligible", "target has no string payload.text (not an artifact)");
+      skip(id, "ineligible", "target has no readable payload.text or payload.message");
       continue;
     }
     if (noTrain.has(id)) {
@@ -507,7 +524,7 @@ export function lyncToTrainingData(result: LyncParseResult): LyncTrainingResult 
         if (cText === undefined || rText === undefined) {
           skipPair(
             "ineligible",
-            `${cText === undefined ? "chosen" : "rejected"} event has no string payload.text (not an artifact)`,
+            `${cText === undefined ? "chosen" : "rejected"} event has no readable payload.text or payload.message`,
           );
           continue;
         }

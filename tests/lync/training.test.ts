@@ -153,6 +153,26 @@ describe("preference pairs", () => {
       files: [LABEL],
     });
   });
+
+  it("trains on structured message text while preserving source ids", () => {
+    const [a, b, c, , selection] = fixtureEvents();
+    const structured = [
+      { ...a, payload: { message: { role: "user", content: [{ type: "text", text: TEXT_A }] } } },
+      { ...b, payload: { message: { role: "assistant", content: [{ type: "text", text: TEXT_B }] } } },
+      { ...c, payload: { message: { role: "assistant", content: [{ type: "text", text: TEXT_C }] } } },
+      selection,
+    ];
+    const { sftRows, preferenceRows, stats } = training(
+      `${structured.map(splicedLine).join("\n")}\n`,
+    );
+
+    expect(stats.sft_rows).toBe(1);
+    expect(stats.preference_rows).toBe(1);
+    expect(sftRows[0].meta.source_event).toBe(B);
+    expect(sftRows[0].prompt[0]).toMatchObject({ event_id: A, text: TEXT_A });
+    expect(preferenceRows[0].chosen).toMatchObject({ event_id: B, text: TEXT_B });
+    expect(preferenceRows[0].rejected).toMatchObject({ event_id: C, text: TEXT_C });
+  });
 });
 
 describe("provenance closure", () => {
