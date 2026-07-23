@@ -236,7 +236,9 @@ The source and output trees must not overlap. The JSON report names every
 converted JSONL file, every unreadable JSONL file, and every ignored non-JSONL
 entry. Any unreadable source makes the command exit nonzero after it prints the
 partial accounting report. Raw session JSONL remains authority; the generated
-lync tree is a deterministic, rebuildable normalization.
+lync tree is a deterministic, rebuildable normalization. Codex journals from
+before the current `{timestamp,type,payload}` envelope are preserved as
+top-level logical payloads rather than losing their role and message content.
 
 The Codex and Claude Code tree importers use the explicit deterministic-id
 schema `splice-session-tree/v1`. A source file's identity is its normalized,
