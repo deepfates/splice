@@ -171,6 +171,13 @@ describe("private agent-session search projection", () => {
       const archive = path.join(tmp, "authority");
       const output = path.join(tmp, "projection");
       await fs.mkdir(archive);
+      await fs.mkdir(path.join(output, ".stage-abandoned", "source-snapshots"), {
+        recursive: true,
+      });
+      await fs.writeFile(
+        path.join(output, ".stage-abandoned", "index.sqlite3"),
+        "interrupted build",
+      );
       await scaledArchive(archive);
       const first = rebuildSessionSearchIndex(archive, output, { batchRows: 64, batchBytes: 64 * 1024 });
       await waitFor(path.join(output, ".rebuild.lock"));
@@ -185,6 +192,12 @@ describe("private agent-session search projection", () => {
       });
       expect(built.manifest.build.peakBatchRows).toBeLessThanOrEqual(64);
       expect(built.manifest.build.peakBatchBytes).toBeLessThanOrEqual(64 * 1024);
+      expect(built.manifest.build.peakIdentityBatchRows).toBeLessThanOrEqual(64);
+      expect(built.manifest.build.peakIdentityBatchBytes).toBeLessThanOrEqual(64 * 1024);
+      expect(built.manifest.build.messageFlushes).toBeGreaterThan(1);
+      expect(built.manifest.build.identityFlushes).toBeGreaterThan(1);
+      expect(built.manifest.build.oversizeMessageRows).toBe(0);
+      expect(built.manifest.build.staleStagesRemoved).toBe(1);
       expect(await fs.stat(path.join(output, ".rebuild.lock")).then(() => true, () => false)).toBe(false);
       expect((await fs.readdir(output)).some((name) => name.startsWith(".stage-"))).toBe(false);
     } finally {

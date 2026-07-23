@@ -16,8 +16,12 @@ import { isRfc3339 } from "./lync.js";
 import { verifyLyncFileStreaming } from "./lync-session-batch.js";
 
 export const SESSION_SEARCH_SCHEMA = "splice-session-search/v2";
-const DEFAULT_BATCH_ROWS = 256;
-const DEFAULT_BATCH_BYTES = 2 * 1024 * 1024;
+// Each flush is a filesystem write plus a synchronous SQLite command. At the
+// old 256-row default, multi-million-event archives spent most of their time
+// crossing that boundary. These bounds keep memory finite while amortizing
+// the fixed cost over production-sized batches.
+const DEFAULT_BATCH_ROWS = 32_768;
+const DEFAULT_BATCH_BYTES = 32 * 1024 * 1024;
 const MAX_ERROR_DETAILS = 1_000;
 
 type JsonRecord = Record<string, unknown>;
@@ -59,6 +63,12 @@ export interface SessionSearchManifest {
     batchBytes: number;
     peakBatchRows: number;
     peakBatchBytes: number;
+    peakIdentityBatchRows: number;
+    peakIdentityBatchBytes: number;
+    messageFlushes: number;
+    identityFlushes: number;
+    oversizeMessageRows: number;
+    staleStagesRemoved: number;
   };
   errors: SessionSearchError[];
   errorDetailsTruncated: number;
@@ -548,7 +558,18 @@ function emptyManifest(batchRows: number, batchBytes: number): SessionSearchMani
     union: { identitiesSeen: 0, unique: 0, identicalDuplicates: 0 },
     messageSegments: 0,
     messages: 0,
-    build: { batchRows, batchBytes, peakBatchRows: 0, peakBatchBytes: 0 },
+    build: {
+      batchRows,
+      batchBytes,
+      peakBatchRows: 0,
+      peakBatchBytes: 0,
+      peakIdentityBatchRows: 0,
+      peakIdentityBatchBytes: 0,
+      messageFlushes: 0,
+      identityFlushes: 0,
+      oversizeMessageRows: 0,
+      staleStagesRemoved: 0,
+    },
     errors: [],
     errorDetailsTruncated: 0,
   };
@@ -593,6 +614,14 @@ export async function rebuildSessionSearchIndex(
       }
       throw error;
     }
+    // A process killed after acquiring the lock can leave private snapshots
+    // and large temporary databases behind. Once this rebuild owns the lock,
+    // no stage can be live, so stale stages are safe to remove before work.
+    for (const entry of await fs.readdir(out, { withFileTypes: true })) {
+      if (!entry.name.startsWith(".stage-")) continue;
+      await fs.rm(path.join(out, entry.name), { recursive: true, force: true });
+      manifest.build.staleStagesRemoved++;
+    }
     await privateMkdir(stage);
     const indexPath = path.join(stage, "index.sqlite3");
     const snapshots = path.join(stage, "source-snapshots");
@@ -613,20 +642,20 @@ export async function rebuildSessionSearchIndex(
       "CREATE VIRTUAL TABLE messages_fts USING fts5(text,content='messages',content_rowid='id',tokenize='trigram case_sensitive 1');",
       "CREATE TABLE union_accounting(identities_seen INTEGER NOT NULL,unique_count INTEGER NOT NULL);",
       "INSERT INTO union_accounting VALUES(0,0);",
-      "CREATE TEMP TABLE seen_event_bodies(id TEXT PRIMARY KEY,body_digest TEXT NOT NULL);",
+      "CREATE TEMP TABLE seen_event_bodies(id TEXT PRIMARY KEY,body_digest TEXT NOT NULL) WITHOUT ROWID;",
       "CREATE TEMP TRIGGER reject_event_body_conflict BEFORE INSERT ON seen_event_bodies WHEN EXISTS(SELECT 1 FROM seen_event_bodies WHERE id=NEW.id AND body_digest<>NEW.body_digest) BEGIN SELECT RAISE(ABORT,'lync union same-id different-body conflict'); END;",
-      "CREATE TEMP TRIGGER count_unique_event_body AFTER INSERT ON seen_event_bodies BEGIN UPDATE union_accounting SET unique_count=unique_count+1; END;",
       "BEGIN IMMEDIATE;",
     ].join("\n"));
 
     let nextId = 1;
     let batch: SearchableSegment[] = [];
-    let batchSize = 0;
+    let batchSize = 2; // JSON array brackets; commas are added on enqueue.
     let batchNo = 0;
     const flush = async (): Promise<void> => {
       if (batch.length === 0) return;
       manifest.build.peakBatchRows = Math.max(manifest.build.peakBatchRows, batch.length);
       manifest.build.peakBatchBytes = Math.max(manifest.build.peakBatchBytes, batchSize);
+      manifest.build.messageFlushes++;
       const batchFile = path.join(stage, `batch-${String(batchNo++).padStart(8, "0")}.json`);
       await fs.writeFile(batchFile, JSON.stringify(batch), { mode: 0o600 });
       const first = batch[0].id;
@@ -638,20 +667,34 @@ export async function rebuildSessionSearchIndex(
       ].join("\n"));
       await fs.rm(batchFile, { force: true });
       batch = [];
-      batchSize = 0;
+      batchSize = 2;
     };
     const enqueue = async (row: Omit<SearchableSegment, "id">): Promise<void> => {
       const withId: SearchableSegment = { ...row, id: nextId++ };
       const bytes = Buffer.byteLength(JSON.stringify(withId), "utf8");
-      if (batch.length > 0 && (batch.length >= batchRows || batchSize + bytes > batchBytes)) await flush();
+      const addedBytes = bytes + (batch.length > 0 ? 1 : 0);
+      if (batch.length > 0 && (batch.length >= batchRows || batchSize + addedBytes > batchBytes)) await flush();
+      if (batch.length === 0 && batchSize + bytes > batchBytes) {
+        manifest.build.oversizeMessageRows++;
+      }
       batch.push(withId);
-      batchSize += bytes;
+      batchSize += bytes + (batch.length > 1 ? 1 : 0);
     };
 
     let identityBatch: { id: string; bodyDigest: string }[] = [];
+    let identityBatchSize = 2;
     let identityBatchNo = 0;
     const flushIdentities = async (): Promise<void> => {
       if (identityBatch.length === 0) return;
+      manifest.build.peakIdentityBatchRows = Math.max(
+        manifest.build.peakIdentityBatchRows,
+        identityBatch.length,
+      );
+      manifest.build.peakIdentityBatchBytes = Math.max(
+        manifest.build.peakIdentityBatchBytes,
+        identityBatchSize,
+      );
+      manifest.build.identityFlushes++;
       const batchFile = path.join(stage, `identity-${String(identityBatchNo++).padStart(8, "0")}.json`);
       await fs.writeFile(batchFile, JSON.stringify(identityBatch), { mode: 0o600 });
       await writer!.execute([
@@ -661,10 +704,19 @@ export async function rebuildSessionSearchIndex(
       ].join("\n"));
       await fs.rm(batchFile, { force: true });
       identityBatch = [];
+      identityBatchSize = 2;
     };
     const enqueueIdentity = async (identity: { id: string; bodyDigest: string }): Promise<void> => {
+      const bytes = Buffer.byteLength(JSON.stringify(identity), "utf8");
+      const addedBytes = bytes + (identityBatch.length > 0 ? 1 : 0);
+      if (
+        identityBatch.length > 0 &&
+        (identityBatch.length >= batchRows || identityBatchSize + addedBytes > batchBytes)
+      ) {
+        await flushIdentities();
+      }
       identityBatch.push(identity);
-      if (identityBatch.length >= batchRows) await flushIdentities();
+      identityBatchSize += bytes + (identityBatch.length > 1 ? 1 : 0);
     };
 
     for (const relative of files) {
@@ -798,7 +850,11 @@ export async function rebuildSessionSearchIndex(
     if (manifest.files.failed > 0) {
       throw new SessionSearchBuildError(`session search: ${manifest.files.failed} source file(s) failed validation`, manifest);
     }
-    await writer.execute("COMMIT; VACUUM;");
+    await writer.execute([
+      "UPDATE union_accounting SET unique_count=(SELECT count(*) FROM seen_event_bodies);",
+      "COMMIT;",
+      "VACUUM;",
+    ].join("\n"));
     await writer.finish();
     writer = null;
     const messageCountOutput = await sqliteOnce(sqliteBinary, indexPath, "SELECT count(*) AS count FROM messages;", { json: true, readonly: true });
