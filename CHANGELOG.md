@@ -7,6 +7,10 @@ Dates are in YYYY-MM-DD.
 
 ## [Unreleased]
 
+No changes are recorded after the 0.4.0 release candidate.
+
+## [0.4.0] - Unpublished release candidate
+
 This release candidate targets `@deepfates/lync` 0.4.0 and Node.js 22 or newer.
 Registry publication remains sequenced after the Lync 0.4.0 publication.
 
@@ -77,6 +81,8 @@ Registry publication remains sequenced after the Lync 0.4.0 publication.
 - JSON now included in default output formats
 
 [0.3.0]: https://github.com/deepfates/splice/compare/v0.2.0...v0.3.0
+
+[0.4.0]: https://github.com/deepfates/splice/compare/v0.3.0...HEAD
 
 [0.2.0]: https://github.com/deepfates/splice/compare/v0.1.2...v0.2.0
 
