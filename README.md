@@ -44,6 +44,11 @@ Run the published CLI (after install):
 
     npx splice --source /path/to/twitter-archive --out ./out
 
+The source checkout is currently version 0.3.0, while the npm package remains
+at 0.1.1 pending an owner-approved release. Use the source checkout for the
+Lync, session-import, and session-search commands documented below; do not
+assume an older published CLI contains them.
+
 Build then run with Node:
 
     npm install
@@ -72,7 +77,7 @@ Help (equivalent to `--help`):
 
       splice --glowfic <url> --out <dir> --assistant <name> [--assistant-regex <pattern>]
       splice --glowfic-board <url> --out <dir> --all-characters [--min-posts <n>]
-      splice lync <command> --source <path> --out <file.lync>   (see "lync output" below)
+      splice lync <command> [options]   (see "lync output" below)
 
     Options:
       --source <path>            Path to Twitter archive directory or Bluesky .car file
@@ -218,9 +223,15 @@ Examples:
     npx tsx splice.ts lync ocr --source ../deep-space/data/signal-ocr --out ./out/signal-ocr.lync
     npx tsx splice.ts lync tweet-embed --source ../deep-space/.embed-cache/tweets --out ./out/embeds.lync
 
+Projection commands read one or more raw event files without rewriting them:
+
+    splice lync markdown --source <file.lync> --out <file.md>
+    splice lync training --source <file.lync> --out-dir <dir> [--render plain|messages]
+
+`markdown` renders the selected main path and nearby alternatives. `training`
+writes attributed SFT and preference JSONL plus a complete accounting report.
 Exit codes match the main CLI: 0 success, 1 runtime/verify error, 2 usage
-error. Future exporters (lync → training data and lync → markdown) will land
-as sibling subcommands here.
+error. Run `splice lync --help` for the full converter and projection surface.
 
 ### Agent-session importer identity and cutover
 
