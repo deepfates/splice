@@ -220,6 +220,8 @@ function artifactText(ev: EligibleEvent): string | undefined {
   const payload = ev.event.payload;
   const text = payload["text"];
   if (typeof text === "string" && text.length > 0) return text;
+  const fullText = payload["full_text"] ?? payload["fullText"];
+  if (typeof fullText === "string" && fullText.length > 0) return fullText;
   const message = payload["message"];
   if (typeof message === "string" && message.length > 0) return message;
   if (!message || typeof message !== "object") return undefined;
@@ -402,7 +404,7 @@ export function lyncToTrainingData(result: LyncParseResult): LyncTrainingResult 
     }
     const text = artifactText(ev);
     if (text === undefined) {
-      skip(id, "ineligible", "target has no readable payload.text or payload.message");
+      skip(id, "ineligible", "target has no readable text payload");
       continue;
     }
     if (noTrain.has(id)) {
@@ -524,7 +526,7 @@ export function lyncToTrainingData(result: LyncParseResult): LyncTrainingResult 
         if (cText === undefined || rText === undefined) {
           skipPair(
             "ineligible",
-            `${cText === undefined ? "chosen" : "rejected"} event has no readable payload.text or payload.message`,
+            `${cText === undefined ? "chosen" : "rejected"} event has no readable text payload`,
           );
           continue;
         }

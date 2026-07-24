@@ -173,6 +173,26 @@ describe("preference pairs", () => {
     expect(preferenceRows[0].chosen).toMatchObject({ event_id: B, text: TEXT_B });
     expect(preferenceRows[0].rejected).toMatchObject({ event_id: C, text: TEXT_C });
   });
+
+  it("trains on preserved Twitter archive text while preserving source ids", () => {
+    const [a, b, c, , selection] = fixtureEvents();
+    const twitter = [
+      { ...a, kind: "twitter/tweet", payload: { id_str: "1", full_text: TEXT_A } },
+      { ...b, kind: "twitter/tweet", payload: { id_str: "2", full_text: TEXT_B } },
+      { ...c, kind: "twitter/tweet", payload: { id_str: "3", full_text: TEXT_C } },
+      selection,
+    ];
+    const { sftRows, preferenceRows, stats } = training(
+      `${twitter.map(splicedLine).join("\n")}\n`,
+    );
+
+    expect(stats.sft_rows).toBe(1);
+    expect(stats.preference_rows).toBe(1);
+    expect(sftRows[0].meta.source_event).toBe(B);
+    expect(sftRows[0].prompt[0]).toMatchObject({ event_id: A, text: TEXT_A });
+    expect(preferenceRows[0].chosen).toMatchObject({ event_id: B, text: TEXT_B });
+    expect(preferenceRows[0].rejected).toMatchObject({ event_id: C, text: TEXT_C });
+  });
 });
 
 describe("provenance closure", () => {
