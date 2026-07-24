@@ -7,9 +7,8 @@ Dates are in YYYY-MM-DD.
 
 ## [Unreleased]
 
-The next release is 0.4.0. It follows `@deepfates/lync` 0.4.0; the package
-version, dependency, lockfile, and supported Node floor will move together once
-that package is available from the registry.
+This release candidate targets `@deepfates/lync` 0.4.0 and Node.js 22 or newer.
+Registry publication remains sequenced after the Lync 0.4.0 publication.
 
 ### Added
 - Deterministic raw Lync importers for Twitter archives, Glowfic, OCR page sets,

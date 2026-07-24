@@ -6,7 +6,8 @@ modular TypeScript CLI and library with explicit sources → transforms → outp
 
 - Idiomatic CLI (clig.dev principles)
 - Modular architecture:
-  - sources: Twitter/X archives and Bluesky repo CAR exports (text-first; blobs soon), ChatGPT, etc. next
+  - sources: Twitter/X archives, Bluesky repo CAR exports, Glowfic, ChatGPT,
+    Claude.ai, Codex, Claude Code, OCR page sets, tweet-embed caches, and raw Lync
   - transforms: filtering, grouping into threads/conversations, text cleaning
   - outputs: Markdown, OAI JSONL, JSONL (normalized items), ShareGPT
 - Library API to compose your own pipeline or plug in proprietary adapters
@@ -39,7 +40,7 @@ More context: https://deepfates.com/convert-your-twitter-archive-into-training-d
 ## Quick start (CLI)
 
 Requirements:
-- Node.js 22+ for the current source checkout (the pinned published Lync 0.3 dependency sets this floor)
+- Node.js 22+
 - For direct execution: `tsx` (installed automatically with `npx`)
 
 Run with tsx (no build needed):
@@ -50,12 +51,10 @@ Run the published CLI (after install):
 
     npx splice --source /path/to/twitter-archive --out ./out
 
-The source checkout still identifies as 0.3.0, but it has moved substantially
-beyond the 0.3.0 tag; its next honest release is 0.4.0. The npm package remains
-at 0.1.1. Use the source checkout for the Lync, session-import, and
-session-search commands documented below; do not assume the older published
-CLI contains them. The 0.4.0 release candidate follows `@deepfates/lync` 0.4.0
-and will update its dependency and runtime floor together.
+The source checkout is the 0.4.0 release candidate and targets
+`@deepfates/lync` 0.4.0. The npm package remains at 0.1.1. Use the source
+checkout for the Lync, session-import, and session-search commands documented
+below; do not assume the older published CLI contains them.
 
 Build then run with Node:
 
@@ -500,7 +499,7 @@ Watch tests:
 
 ## Roadmap (short)
 
-- More inputs: Reddit, ChatGPT, HF datasets
+- More inputs: Reddit and Hugging Face datasets
 - Checkpointing and resumable pipelines (JSONL-based manifests)
 - More outputs: SQLite/Parquet/CSV
 - Blob fetching for Bluesky media
