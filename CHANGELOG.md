@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 This project follows Conventional Commits and semantic versioning.
 Dates are in YYYY-MM-DD.
 
+## [Unreleased]
+
+The next release is 0.4.0. It follows `@deepfates/lync` 0.4.0; the package
+version, dependency, lockfile, and supported Node floor will move together once
+that package is available from the registry.
+
+### Added
+- Deterministic raw Lync importers for Twitter archives, Glowfic, OCR page sets,
+  tweet-embed caches, Codex sessions, Claude Code sessions, ChatGPT exports, and
+  Claude.ai exports.
+- Conversation-loom adapters that preserve branching message ancestry.
+- Private agent-session tree intake and bounded local search.
+- Raw Lync Markdown, SFT, and preference projections that retain source event
+  identities and standard selection annotations.
+
+### Changed
+- Lync output is serialized and independently parsed through the reference
+  implementation; unsafe or lossy output fails loudly.
+- Repeated Claude session identities are represented without weakening
+  same-id conflict detection.
+- Training projection understands structured message events and ignores
+  tool-only records without losing surrounding context.
+
+### Fixed
+- Cycle verification remains linear at large-file and large-line boundaries.
+- Empty public message records and stale tweet-cache size assumptions no longer
+  corrupt otherwise valid intake.
+
 ## [0.3.0] - 2026-01-04
 
 ### Added

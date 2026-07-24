@@ -1,6 +1,8 @@
 # 🫚 splice
 
-Convert social/chat archives into normalized threads and export to Markdown, OAI JSONL, JSON (normalized items), and ShareGPT. Modular TypeScript CLI and library with extensible sources → transforms → outputs.
+Convert social, chat, agent-session, and OCR archives into inspectable threads,
+append-only Lync histories, readable Markdown, and training data. Splice is a
+modular TypeScript CLI and library with explicit sources → transforms → outputs.
 
 - Idiomatic CLI (clig.dev principles)
 - Modular architecture:
@@ -23,8 +25,12 @@ Today it supports:
 - **Twitter/X** — Local archive exports (ZIP extracted)
 - **Bluesky** — AT Protocol CAR file exports with optional API enrichment
 - **Glowfic** — Collaborative fiction threads, sections, or boards via URL
+- **ChatGPT and Claude.ai** — Exported conversation graphs as real branching Lync looms
+- **Codex and Claude Code** — Deterministic private session-tree intake and local search
+- **OCR page sets and tweet-embed caches** — Deterministic raw Lync importers
+- **Raw Lync** — Verification, readable projection, and SFT/preference export without reminting source identity
 
-Next: ChatGPT, Reddit, Hugging Face datasets.
+Reddit and Hugging Face dataset adapters remain future work.
 
 This library started life as a Python script. This is a TypeScript rewrite where development will continue. It has powered projects like [deeperfates.com](https://deeperfates.com), [keltham.lol](https://keltham.lol), and [youaretheassistantnow.com](https://youaretheassistantnow.com).
 
@@ -33,7 +39,7 @@ More context: https://deepfates.com/convert-your-twitter-archive-into-training-d
 ## Quick start (CLI)
 
 Requirements:
-- Node.js 18+ (tested with recent LTS)
+- Node.js 22+ for the current source checkout (the pinned published Lync 0.3 dependency sets this floor)
 - For direct execution: `tsx` (installed automatically with `npx`)
 
 Run with tsx (no build needed):
@@ -44,10 +50,12 @@ Run the published CLI (after install):
 
     npx splice --source /path/to/twitter-archive --out ./out
 
-The source checkout is currently version 0.3.0, while the npm package remains
-at 0.1.1 pending an owner-approved release. Use the source checkout for the
-Lync, session-import, and session-search commands documented below; do not
-assume an older published CLI contains them.
+The source checkout still identifies as 0.3.0, but it has moved substantially
+beyond the 0.3.0 tag; its next honest release is 0.4.0. The npm package remains
+at 0.1.1. Use the source checkout for the Lync, session-import, and
+session-search commands documented below; do not assume the older published
+CLI contains them. The 0.4.0 release candidate follows `@deepfates/lync` 0.4.0
+and will update its dependency and runtime floor together.
 
 Build then run with Node:
 
