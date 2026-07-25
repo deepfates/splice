@@ -506,6 +506,12 @@ Watch tests:
 - Better selection: persona/character filters, time ranges
 - Improved role attribution and metadata preservation
 
+## Work tracking
+
+Project-owned implementation work is tracked in `.tickets/`; run `tk list`
+from this repository to inspect it. Cross-project corpus coordination remains
+in the workshop root ledger.
+
 ## License
 
 MIT. See `LICENSE`.
