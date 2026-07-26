@@ -176,3 +176,42 @@ describe("windowedConversationsFromGlowficThread", () => {
     expect(postSpeaker(post("Alice", "x"))).toBe("Alice");
   });
 });
+
+describe("extractUniqueCharacters", () => {
+  // Regression: glowfic handles identify an icon/mood, not a person. Keying on
+  // them split Carissa Sevar into three "characters" on a real board.
+  it("collapses one character across its icon handles", async () => {
+    const { extractUniqueCharacters } =
+      await import("../src/sources/glowfic.js");
+    const withHandle = (display: string, handle: string, author: string) =>
+      ({
+        post_id: `p-${Math.random()}`,
+        author,
+        character_display_name: display,
+        character_handle: handle,
+        icon_url: null,
+        timestamp: "2024-01-01T00:00:00Z",
+        content: "<p>x</p>",
+      }) as GlowPost;
+
+    const t = {
+      id: 3,
+      title: "one character, three moods, two authors",
+      url: "https://glowfic.com/posts/3",
+      description: null,
+      authors: [],
+      posts: [
+        withHandle("Carissa Sevar", "to-let-you-in", "lintamande"),
+        withHandle("Carissa Sevar", "loves-her-strings", "lintamande"),
+        withHandle("Carissa Sevar", "abide-the-twin-damnation", "someone-else"),
+        withHandle("Keltham", "lawful chaotic", "Iarwain"),
+      ],
+    } as GlowThread;
+
+    const chars = extractUniqueCharacters([t]);
+    const carissa = chars.filter((c) => c.displayName === "Carissa Sevar");
+    expect(carissa).toHaveLength(1);
+    expect(carissa[0].postCount).toBe(3);
+    expect(chars).toHaveLength(2);
+  });
+});

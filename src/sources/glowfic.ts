@@ -639,14 +639,20 @@ export function extractUniqueCharacters(
       const displayName = (post.character_display_name || "").trim();
       const author = (post.author || "").trim();
 
-      // Use handle as primary key, fall back to display name
-      const id = handle || displayName || author || "unknown";
+      // Key on display name, not handle. A glowfic handle identifies an
+      // icon/mood ("loves-her-strings", "abide-the-twin-damnation"), not a
+      // person — keying on it splits one character into several. Carissa
+      // Sevar carries three handles across a real board and fragments into
+      // three "characters" of 5,339 / 2,619 / 940 posts instead of one 8,898.
+      // Display name is the identity; handle and author are attributes of a
+      // post, and the same character written by several authors is one
+      // character.
+      const id = displayName || handle || author || "unknown";
       if (!id || id === "unknown") continue;
 
       const existing = charMap.get(id);
       if (existing) {
         existing.postCount++;
-        // Fill in missing fields if available
         if (!existing.handle && handle) existing.handle = handle;
         if (!existing.displayName && displayName)
           existing.displayName = displayName;
@@ -731,12 +737,14 @@ export function segmentBoardByAllCharacters(
     // Build a matcher for this character
     const matcher: AssistantMatcher = (post) => {
       if (char.id === NARRATOR) return !postSpeakerNamed(post);
-      const postHandle = (post.character_handle || "").trim().toLowerCase();
+      const charId = char.id.toLowerCase();
       const postDisplay = (post.character_display_name || "")
         .trim()
         .toLowerCase();
-      const charId = char.id.toLowerCase();
-      return postHandle === charId || postDisplay === charId;
+      // Display name identifies the character; fall back to handle only for
+      // posts that carry no display name at all.
+      if (postDisplay) return postDisplay === charId;
+      return (post.character_handle || "").trim().toLowerCase() === charId;
     };
 
     // Collect all conversation segments for this character
