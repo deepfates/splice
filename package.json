@@ -1,13 +1,14 @@
 {
   "name": "@deepfates/splice",
   "version": "0.4.0",
-  "description": "splice \u2014 convert social/chat exports into normalized threads and export to Markdown and OAI JSONL",
+  "description": "splice — convert social/chat exports into normalized threads and export to Markdown and OAI JSONL",
   "license": "MIT",
   "author": "",
   "type": "module",
   "main": "dist/index.js",
   "exports": {
-    ".": "./dist/index.js"
+    ".": "./dist/index.js",
+    "./browser": "./dist/browser.js"
   },
   "bin": {
     "splice": "dist/cli/splice.js"
@@ -58,9 +59,10 @@
   "dependencies": {
     "@atproto/api": "^0.18.0",
     "@atproto/repo": "^0.8.10",
-    "cosmiconfig": "^9.0.0",
     "@deepfates/lync": "0.4.0",
-    "glowfic-dl": "^0.2.1"
+    "cosmiconfig": "^9.0.0",
+    "glowfic-dl": "^0.2.1",
+    "json5": "^2.2.3"
   },
   "devDependencies": {
     "@types/node": "^22.7.4",

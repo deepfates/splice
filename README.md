@@ -31,6 +31,29 @@ Today it supports:
 - **OCR page sets and tweet-embed caches** — Deterministic raw Lync importers
 - **Raw Lync** — Verification, readable projection, and SFT/preference export without reminting source identity
 
+The `@deepfates/splice/browser` export also provides a filesystem-free Twitter
+archive adapter for local applications. It accepts decoded members from an
+extracted archive or ZIP and returns one deterministic conversation loom: a
+visible corpus root, held reply threads, reviewable likes/retweets, exact source
+record IDs, and complete malformed/unresolved-parent accounting. It performs no
+I/O, network requests, or logging; the host application owns private file
+selection and persistence.
+
+```ts
+import { twitterArchiveEntriesToConversation } from "@deepfates/splice/browser";
+
+const { snapshot, stats } = twitterArchiveEntriesToConversation([
+  { path: "data/manifest.js", text: manifestText },
+  { path: "data/account.js", text: accountText },
+  { path: "data/tweets.js", text: tweetsText },
+  { path: "data/like.js", text: likesText },
+]);
+```
+
+The adapter parses Twitter's JavaScript-wrapped JSON as data with JSON5; it
+never evaluates archive JavaScript. Media members are deliberately outside
+this text-review contract.
+
 Reddit and Hugging Face dataset adapters remain future work.
 
 This library started life as a Python script. This is a TypeScript rewrite where development will continue. It has powered projects like [deeperfates.com](https://deeperfates.com), [keltham.lol](https://keltham.lol), and [youaretheassistantnow.com](https://youaretheassistantnow.com).

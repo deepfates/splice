@@ -7,7 +7,13 @@ Dates are in YYYY-MM-DD.
 
 ## [Unreleased]
 
-No changes are recorded after the 0.4.0 release candidate.
+- Added the filesystem-free `@deepfates/splice/browser` Twitter archive
+  adapter. Local applications can turn decoded ZIP/directory members into one
+  deterministic conversation loom without uploading content or evaluating the
+  archive's JavaScript wrappers.
+- The browser projection retains every readable tweet, retweet, and like,
+  preserves held reply topology and exact external-parent IDs, and reports
+  malformed records and unresolved replies explicitly.
 
 ## [0.4.0] - Unpublished release candidate
 
