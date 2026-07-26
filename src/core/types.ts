@@ -11,10 +11,7 @@ import * as path from "node:path";
 export type Level = "debug" | "info" | "warn" | "error";
 
 export type SourceId =
-  | "twitter:tweet"
-  | "twitter:like"
-  | "glowfic:post"
-  | string;
+  "twitter:tweet" | "twitter:like" | "glowfic:post" | string;
 
 export interface MediaAttachment {
   id: string;
@@ -47,6 +44,14 @@ export type Role = "assistant" | "user";
 export interface ChatMessage {
   role: Role;
   content: string;
+  /**
+   * Optional speaker identity, passed through to the OpenAI/Harmony `name`
+   * field. Used when a conversation has more than two participants so the
+   * model can tell interlocutors apart — without baking a "Speaker:" prefix
+   * into `content`, which would train it to expect a prefix that will not
+   * exist at inference time.
+   */
+  name?: string;
 }
 
 /* -------------------------------- Logger --------------------------------- */
