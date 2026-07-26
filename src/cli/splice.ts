@@ -13,7 +13,11 @@ import { fileURLToPath } from "node:url";
 import { CLIOptions, parseArgs, makeLogger, usage } from "../core/types.js";
 
 import { detectTwitterArchive, ingestTwitter } from "../sources/twitter.js";
-import { detectBlueskyCar, ingestBlueskyCar, enrichBlueskyPosts } from "../sources/bluesky.js";
+import {
+  detectBlueskyCar,
+  ingestBlueskyCar,
+  enrichBlueskyPosts,
+} from "../sources/bluesky.js";
 // Glowfic support is loaded dynamically when needed to avoid ESM/undici issues on Node 18
 import {
   applyFilters,
@@ -143,6 +147,7 @@ async function main() {
       "--glowfic-url",
       "--glowfic-urls",
       "--glowfic-board",
+      "--glowfic-dir",
       "--all-characters",
       "--min-posts",
       "--assistant",
@@ -184,7 +189,10 @@ async function main() {
   }
 
   if (
-    (!opts.source && !(opts.glowfic && opts.glowfic.length > 0) && !opts.glowficBoard) ||
+    (!opts.source &&
+      !(opts.glowfic && opts.glowfic.length > 0) &&
+      !opts.glowficBoard &&
+      !opts.glowficDir) ||
     !opts.out
   ) {
     process.stderr.write(usage() + "\n");
@@ -197,55 +205,61 @@ async function main() {
     opts.workspace || path.join(outDir, ".splice"),
   );
 
-  // Glowfic multi-character board export (when --glowfic-board provided)
-  if (opts.glowficBoard) {
+  // Glowfic multi-character export, from a board URL or a local cache dir
+  if (opts.glowficBoard || opts.glowficDir) {
     try {
-      logger("info", `Fetching Glowfic board: ${opts.glowficBoard}`);
-      
       // Lazy-load Glowfic support
       const {
         fetchGlowficThreads,
+        loadGlowficThreadsFromDir,
         segmentBoardByAllCharacters,
         extractUniqueCharacters,
       } = await import("../sources/glowfic.js");
-      const { writeHuggingFaceDataset } = await import("../outputs/hf-dataset.js");
-      
-      // Fetch all threads from the board (single request)
-      const threads = await fetchGlowficThreads(opts.glowficBoard, logger, {
-        markdown: true,
-      });
-      logger("info", `Fetched ${threads.length} thread(s)`);
-      
+      const { writeHuggingFaceDataset } =
+        await import("../outputs/hf-dataset.js");
+
+      // A cached directory is preferred when given: refetching a board costs
+      // hours against a rate-limited host for threads already on disk.
+      const threads = opts.glowficDir
+        ? await loadGlowficThreadsFromDir(opts.glowficDir, logger)
+        : await fetchGlowficThreads(opts.glowficBoard!, logger, {
+            markdown: true,
+          });
+      logger("info", `${threads.length} thread(s)`);
+
       // Extract and log character stats
       const allChars = extractUniqueCharacters(threads);
       logger("info", `Found ${allChars.length} unique character(s)`);
-      logger("info", `Characters with ≥${opts.minPosts} posts: ${allChars.filter(c => c.postCount >= opts.minPosts).length}`);
-      
+      logger(
+        "info",
+        `Characters with ≥${opts.minPosts} posts: ${allChars.filter((c) => c.postCount >= opts.minPosts).length}`,
+      );
+
       // Segment by all characters
       const results = segmentBoardByAllCharacters(threads, {
         minPosts: opts.minPosts,
         markdown: true,
       });
       logger("info", `Generated datasets for ${results.length} character(s)`);
-      
-      // Extract source name from URL
-      const boardUrl = new URL(opts.glowficBoard);
-      const boardId = boardUrl.pathname.split("/").pop() || "board";
-      const sourceName = `Glowfic Board ${boardId}`;
-      
+
+      const sourceName = opts.glowficDir
+        ? `Glowfic ${opts.glowficDir}`
+        : `Glowfic Board ${new URL(opts.glowficBoard!).pathname.split("/").pop() || "board"}`;
+
       // Write HuggingFace dataset
-      const { characterCount, conversationCount } = await writeHuggingFaceDataset(
-        results,
-        {
+      const { characterCount, conversationCount } =
+        await writeHuggingFaceDataset(results, {
           outDir,
           sourceName,
-          sourceUrl: opts.glowficBoard,
+          sourceUrl: opts.glowficBoard ?? opts.glowficDir ?? "",
           dryRun: opts.dryRun,
           logger,
-        },
+        });
+
+      logger(
+        "info",
+        `Exported ${conversationCount} conversations across ${characterCount} characters`,
       );
-      
-      logger("info", `Exported ${conversationCount} conversations across ${characterCount} characters`);
       logger("info", opts.dryRun ? "Dry run complete." : "Done.");
       process.exit(0);
     } catch (e) {
@@ -282,9 +296,8 @@ async function main() {
     }
     try {
       // Lazy-load Glowfic support to avoid undici import on Node 18 when not used
-      const { conversationsFromGlowficUrls } = await import(
-        "../sources/glowfic.js"
-      );
+      const { conversationsFromGlowficUrls } =
+        await import("../sources/glowfic.js");
       const convs = await conversationsFromGlowficUrls(
         opts.glowfic,
         { displayName: re, handle: re, author: re } as any,
@@ -341,9 +354,7 @@ async function main() {
     },
   ] as const;
 
-  let selected:
-    | (typeof adapters)[number]
-    | null = null;
+  let selected: (typeof adapters)[number] | null = null;
   for (const adapter of adapters) {
     // eslint-disable-next-line no-await-in-loop
     const matches = await adapter.detect(source);
@@ -535,7 +546,7 @@ async function main() {
               kind: selected.kind,
               uri:
                 selected.kind === "bluesky"
-                  ? items[0]?.accountId ?? source
+                  ? (items[0]?.accountId ?? source)
                   : source,
             },
           ],

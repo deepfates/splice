@@ -101,6 +101,7 @@ export type CLIOptions = {
   assistantRegex?: string; // regex (JS) on display name/handle/author
   // glowfic multi-character export
   glowficBoard?: string; // single board URL for multi-character export
+  glowficDir?: string; // directory of cached glowfic-dl thread.json exports
   allCharacters: boolean; // export for all characters
   minPosts: number; // minimum posts for character inclusion
 };
@@ -138,6 +139,7 @@ export function parseArgs(argv: string[]): CLIOptions {
     assistantRegex: undefined,
     // glowfic multi-character export
     glowficBoard: undefined,
+    glowficDir: undefined,
     allCharacters: false,
     minPosts: 10,
   };
@@ -220,6 +222,8 @@ export function parseArgs(argv: string[]): CLIOptions {
           opts.glowfic = list;
         }
       }
+    } else if (a === "--glowfic-dir") {
+      opts.glowficDir = args[++i];
     } else if (a === "--assistant") {
       opts.assistant = args[++i];
     } else if (a === "--assistant-regex" || a === "--assistant-re") {

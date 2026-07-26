@@ -109,6 +109,33 @@ export async function fetchGlowficThreadsMany(
   return out;
 }
 
+/**
+ * Load glowfic-dl `thread.json` exports from a directory.
+ *
+ * Fetching a board re-downloads every thread, which is hours against a host
+ * that rate-limits at ~2 requests/second. Once threads are on disk there is
+ * no reason to pay that again to rebuild a dataset from them.
+ */
+export async function loadGlowficThreadsFromDir(
+  dir: string,
+  logger: (l: Level, m: string) => void = () => {},
+): Promise<GlowThread[]> {
+  const { readdir, readFile } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const names = (await readdir(dir)).filter((n) => n.endsWith(".json"));
+  const threads: GlowThread[] = [];
+  for (const name of names) {
+    try {
+      const data = JSON.parse(await readFile(join(dir, name), "utf8"));
+      if (data && Array.isArray(data.posts)) threads.push(data as GlowThread);
+    } catch (err) {
+      logger("warn", `Skipping ${name}: ${(err as Error).message}`);
+    }
+  }
+  logger("info", `Loaded ${threads.length} thread(s) from ${dir}`);
+  return threads;
+}
+
 /* -------------------------- Normalization to Items ------------------------- */
 
 /**
@@ -280,6 +307,14 @@ export type AssistantMatcher =
 
 /** Display name used for posts written without a character attached. */
 export const NARRATOR = "(narrator/none)";
+
+/** True when a post is attributed to a named character. */
+export function postSpeakerNamed(post: GlowPost): boolean {
+  return Boolean(
+    (post.character_display_name || "").trim() ||
+    (post.character_handle || "").trim(),
+  );
+}
 
 /** The speaker of a post: its character's display name, or the narrator sentinel. */
 export function postSpeaker(post: GlowPost): string {
@@ -655,10 +690,37 @@ export function segmentBoardByAllCharacters(
   options?: {
     minPosts?: number;
     markdown?: boolean;
+    /** Emit multi-turn windows with speaker names. Default true. */
+    windowed?: boolean;
+    windowWords?: number;
+    /**
+     * Include the unattributed narrator as a target. Default true.
+     * `extractUniqueCharacters` keys on handle/display/author, so narration
+     * would otherwise scatter across every author who wrote any, and the
+     * world voice — usually one of the largest on a board — is unreachable.
+     */
+    includeNarrator?: boolean;
   },
 ): MultiCharacterResult[] {
   const minPosts = options?.minPosts ?? 10;
+  const windowed = options?.windowed !== false;
   const characters = extractUniqueCharacters(threads);
+
+  if (options?.includeNarrator !== false) {
+    const narratorPosts = threads.reduce(
+      (n, t) => n + (t.posts || []).filter((p) => !postSpeakerNamed(p)).length,
+      0,
+    );
+    if (narratorPosts >= minPosts) {
+      characters.push({
+        id: NARRATOR,
+        displayName: NARRATOR,
+        handle: null,
+        author: null,
+        postCount: narratorPosts,
+      } as GlowficCharacter);
+    }
+  }
 
   const results: MultiCharacterResult[] = [];
 
@@ -668,6 +730,7 @@ export function segmentBoardByAllCharacters(
 
     // Build a matcher for this character
     const matcher: AssistantMatcher = (post) => {
+      if (char.id === NARRATOR) return !postSpeakerNamed(post);
       const postHandle = (post.character_handle || "").trim().toLowerCase();
       const postDisplay = (post.character_display_name || "")
         .trim()
@@ -681,11 +744,14 @@ export function segmentBoardByAllCharacters(
     let messageCount = 0;
 
     for (const thread of threads) {
-      const segments = segmentedConversationsFromGlowficThread(
-        thread,
-        matcher,
-        { markdown: options?.markdown !== false },
-      );
+      const segments = windowed
+        ? windowedConversationsFromGlowficThread(thread, matcher, {
+            markdown: options?.markdown !== false,
+            windowWords: options?.windowWords,
+          })
+        : segmentedConversationsFromGlowficThread(thread, matcher, {
+            markdown: options?.markdown !== false,
+          });
       for (const msgs of segments) {
         if (msgs.length > 0) {
           conversations.push(msgs);
