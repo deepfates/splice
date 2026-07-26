@@ -460,8 +460,7 @@ export function windowedConversationsFromGlowficThread(
   }
   flush();
 
-  const strict =
-    options?.strict !== false && options?.mergeConsecutive !== false;
+  const strict = options?.strict !== false;
   return strict ? conversations.map(mergeAdjacentSameRole) : conversations;
 }
 
