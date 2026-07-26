@@ -18,8 +18,8 @@ function fixtureEntries(): BrowserArchiveEntry[] {
 }
 
 describe("browser-local Twitter archive → one reviewable conversation", () => {
-  it("keeps every readable record, reply topology, provenance, and accounting", () => {
-    const result = twitterArchiveEntriesToConversation(fixtureEntries());
+  it("keeps every readable record, reply topology, provenance, and accounting", async () => {
+    const result = await twitterArchiveEntriesToConversation(fixtureEntries());
     expect(result.stats).toEqual({
       sourceRecords: 3,
       readableRecords: 3,
@@ -59,15 +59,15 @@ describe("browser-local Twitter archive → one reviewable conversation", () => 
     expect(JSON.stringify(result)).not.toContain("test@example.com");
   });
 
-  it("is deterministic across archive-member permutations", () => {
-    const forward = twitterArchiveEntriesToConversation(fixtureEntries());
-    const reverse = twitterArchiveEntriesToConversation(fixtureEntries().reverse());
+  it("is deterministic across archive-member permutations", async () => {
+    const forward = await twitterArchiveEntriesToConversation(fixtureEntries());
+    const reverse = await twitterArchiveEntriesToConversation(fixtureEntries().reverse());
     expect(reverse).toEqual(forward);
   });
 
-  it("rejects an archive without its declared manifest instead of guessing", () => {
-    expect(() => twitterArchiveEntriesToConversation([
+  it("rejects an archive without its declared manifest instead of guessing", async () => {
+    await expect(twitterArchiveEntriesToConversation([
       { path: "data/tweets.js", text: "window.YTD.tweets.part0 = []" },
-    ])).toThrow(/data\/manifest\.js/);
+    ])).rejects.toThrow(/data\/manifest\.js/);
   });
 });

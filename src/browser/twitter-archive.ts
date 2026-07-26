@@ -1,10 +1,22 @@
 import JSON5 from "json5";
 
-import type { LoomSnapshot } from "@deepfates/lync";
-
-import { deterministicLyncId } from "../outputs/lync.js";
-
 export const TWITTER_ARCHIVE_BROWSER_PROFILE = "splice/twitter-archive/v1" as const;
+
+export interface BrowserConversationSnapshot<TPayload, TLoomMeta, TTurnMeta> {
+  loom: {
+    id: string;
+    meta: TLoomMeta;
+    createdAt: number;
+  };
+  turns: Array<{
+    id: string;
+    loomId: string;
+    parentId: string | null;
+    payload: TPayload;
+    meta?: TTurnMeta;
+    createdAt: number;
+  }>;
+}
 
 export interface BrowserArchiveEntry {
   /** Portable slash-separated path inside an extracted archive or ZIP. */
@@ -67,7 +79,7 @@ export interface TwitterArchiveBrowserStats {
 }
 
 export interface TwitterArchiveBrowserResult {
-  snapshot: LoomSnapshot<
+  snapshot: BrowserConversationSnapshot<
     TwitterArchiveTurnPayload,
     TwitterArchiveConversationMeta,
     TwitterArchiveTurnMeta
@@ -223,8 +235,23 @@ function sourceActor(record: ArchiveRecord, ownerHandle: string): string {
   return "unknown";
 }
 
-function turnId(recordId: string): string {
-  return deterministicLyncId("twitter", "archive-turn", recordId);
+async function deterministicId(...parts: string[]): Promise<string> {
+  const chunks = parts.map((part) => new TextEncoder().encode(`${part}\0`));
+  const length = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+  const input = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    input.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  if (!globalThis.crypto?.subtle) {
+    throw new Error("twitter archive: Web Crypto SHA-256 is unavailable");
+  }
+  const bytes = new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", input)).slice(0, 16);
+  bytes[6] = (bytes[6] & 0x0f) | 0x80;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 function parseArchive(entries: readonly BrowserArchiveEntry[]): {
@@ -289,12 +316,12 @@ function parseArchive(entries: readonly BrowserArchiveEntry[]): {
  * Tweets, retweets, and likes all remain reviewable. Malformed records are
  * counted in both stats and the visible corpus-root summary.
  */
-export function twitterArchiveEntriesToConversation(
+export async function twitterArchiveEntriesToConversation(
   entries: readonly BrowserArchiveEntry[],
-): TwitterArchiveBrowserResult {
+): Promise<TwitterArchiveBrowserResult> {
   const { identity, records, sourceRecords, malformedRecords } = parseArchive(entries);
   const accountLocator = identity.accountId ?? identity.ownerHandle;
-  const rootId = deterministicLyncId("twitter", "archive", accountLocator);
+  const rootId = await deterministicId("twitter", "archive", accountLocator);
   const loomId = `lync:${rootId}`;
   const ids = new Set(records.map((record) => record.id));
   const unresolvedReplies = records.filter(
@@ -309,7 +336,11 @@ export function twitterArchiveEntriesToConversation(
     const time = record.createdAt ? Date.parse(record.createdAt) : Number.NaN;
     return Number.isFinite(time) ? [time] : [];
   }).sort((a, b) => a - b)[0] ?? 0;
-  const corpusTurnId = deterministicLyncId("twitter", "archive-corpus", accountLocator);
+  const corpusTurnId = await deterministicId("twitter", "archive-corpus", accountLocator);
+  const turnIds = new Map<string, string>();
+  await Promise.all(records.map(async (record) => {
+    turnIds.set(record.id, await deterministicId("twitter", "archive-turn", record.id));
+  }));
   const title = identity.ownerHandle === "__owner__"
     ? "Twitter archive"
     : `Twitter archive @${identity.ownerHandle}`;
@@ -337,10 +368,10 @@ export function twitterArchiveEntriesToConversation(
   ];
   for (const record of records) {
     const heldParent = record.kind === "tweet" && record.parentId && ids.has(record.parentId)
-      ? turnId(record.parentId)
+      ? (turnIds.get(record.parentId) as string)
       : corpusTurnId;
     const createdAt = record.createdAt ? Date.parse(record.createdAt) : Number.NaN;
-    const id = turnId(record.id);
+    const id = turnIds.get(record.id) as string;
     turns.push({
       id,
       loomId,
