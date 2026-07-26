@@ -1,7 +1,12 @@
 import { describe, it, expect } from "vitest";
 
+import { readFileSync } from "node:fs";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import {
   windowedConversationsFromGlowficThread,
+  validateConversation,
   segmentedConversationsFromGlowficThread,
   isAssistantPost,
   postSpeaker,
@@ -97,7 +102,6 @@ describe("windowedConversationsFromGlowficThread", () => {
   it("drops names when merging consecutive same-role turns", () => {
     const [conv] = windowedConversationsFromGlowficThread(thread(), "Bob", {
       windowWords: 10_000,
-      mergeConsecutive: true,
     });
     for (let i = 1; i < conv.length; i++) {
       expect(conv[i].role).not.toBe(conv[i - 1].role);
@@ -114,6 +118,57 @@ describe("windowedConversationsFromGlowficThread", () => {
       includeNames: false,
     });
     expect(conv.every((m) => m.name === undefined)).toBe(true);
+  });
+
+  // Regression: a post that cleans to empty is dropped, which can leave two
+  // of the target's posts adjacent. That produced consecutive assistant turns
+  // and a record every training framework rejects.
+  it("never emits consecutive assistant turns when a post cleans to empty", () => {
+    const t = {
+      id: 2,
+      title: "empty post between two assistant posts",
+      url: "https://glowfic.com/posts/2",
+      description: null,
+      authors: [],
+      posts: [
+        post("Bob", "Bob says something."),
+        post("Alice", "Alice replies."),
+        post("Bob", "   "),
+        post("Alice", "Alice keeps going."),
+      ],
+    } as GlowThread;
+
+    const convs = windowedConversationsFromGlowficThread(t, "Alice", {
+      windowWords: 10_000,
+    });
+    expect(convs.length).toBeGreaterThan(0);
+    for (const c of convs) expect(validateConversation(c)).toEqual([]);
+  });
+
+  it("emits only valid conversations over the real fixture thread", () => {
+    const fixture = JSON.parse(
+      readFileSync(
+        path.resolve(
+          path.dirname(fileURLToPath(import.meta.url)),
+          "fixtures/glowfic-export/thread.json",
+        ),
+        "utf8",
+      ),
+    ) as GlowThread;
+
+    const speakers = new Set((fixture.posts || []).map(postSpeaker));
+    expect(speakers.size).toBeGreaterThan(1);
+
+    for (const target of [...speakers, NARRATOR]) {
+      const convs = windowedConversationsFromGlowficThread(
+        fixture,
+        target === NARRATOR ? { narrator: true } : target,
+        { windowWords: 300 },
+      );
+      for (const c of convs) {
+        expect(validateConversation(c), `target ${target}`).toEqual([]);
+      }
+    }
   });
 
   it("reports the narrator sentinel for unattributed posts", () => {

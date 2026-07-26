@@ -351,9 +351,45 @@ export type WindowedConversationOptions = ConversationOptions & {
    * Default true.
    */
   includeNames?: boolean;
+  /**
+   * Guarantee strictly alternating roles, ending on `assistant`. Default true.
+   *
+   * Consecutive `assistant` turns occur naturally: a post between two of the
+   * target's posts can clean to empty and be dropped, leaving them adjacent.
+   * Training frameworks reject such a record, so runs are merged unless this
+   * is disabled. A merged turn keeps its `name` only when every message in
+   * the run had the same one.
+   */
+  strict?: boolean;
 };
 
 const DEFAULT_WINDOW_WORDS = 1200;
+
+/**
+ * Structural problems a training framework will reject. Empty array = valid.
+ * Exported so callers can gate a write rather than discover it downstream as
+ * an opaque "line N is not a valid record".
+ */
+export function validateConversation(messages: ChatMessage[]): string[] {
+  const problems: string[] = [];
+  if (!messages.length) return ["no messages"];
+  if (messages.some((m) => !m.content || !m.content.trim())) {
+    problems.push("empty content");
+  }
+  const body = messages.filter((m) => m.role !== ("system" as Role));
+  if (!body.length) return [...problems, "no turns"];
+  if (body[0].role !== "user") problems.push(`starts with ${body[0].role}`);
+  if (body[body.length - 1].role !== "assistant") {
+    problems.push(`ends with ${body[body.length - 1].role}`);
+  }
+  for (let i = 1; i < body.length; i++) {
+    if (body[i].role === body[i - 1].role) {
+      problems.push(`consecutive ${body[i].role}`);
+      break;
+    }
+  }
+  return problems;
+}
 
 /**
  * Slice a thread into multi-turn conversations.
@@ -424,10 +460,9 @@ export function windowedConversationsFromGlowficThread(
   }
   flush();
 
-  if (options?.mergeConsecutive) {
-    return conversations.map(mergeAdjacentSameRole);
-  }
-  return conversations;
+  const strict =
+    options?.strict !== false && options?.mergeConsecutive !== false;
+  return strict ? conversations.map(mergeAdjacentSameRole) : conversations;
 }
 
 /**
