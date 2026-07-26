@@ -14,6 +14,8 @@ Dates are in YYYY-MM-DD.
 - The browser projection retains every readable tweet, retweet, and like,
   preserves held reply topology and exact external-parent IDs, and reports
   malformed records and unresolved replies explicitly.
+- Syncable browser Looms carry readable text and explicit provenance without
+  copying arbitrary unpresented provider fields from archive records.
 
 ## [0.4.0] - Unpublished release candidate
 

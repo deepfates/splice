@@ -65,6 +65,24 @@ describe("browser-local Twitter archive → one reviewable conversation", () => 
     expect(reverse).toEqual(forward);
   });
 
+  it("does not smuggle unpresented provider fields into the syncable Loom", async () => {
+    const entries = fixtureEntries().map((entry) => entry.path.endsWith("tweets.js")
+      ? {
+          ...entry,
+          text: entry.text.replace(
+            'full_text: "Top tweet',
+            'private_metadata: "MUST NOT SYNC", full_text: "Top tweet',
+          ),
+        }
+      : entry);
+    const result = await twitterArchiveEntriesToConversation(entries);
+    expect(JSON.stringify(result)).not.toContain("MUST NOT SYNC");
+    const tweet = result.snapshot.turns.find(
+      (turn) => turn.meta.archiveSource?.recordId === "1000000000000000001",
+    );
+    expect(tweet?.payload.message).toBe(tweet?.payload.text);
+  });
+
   it("rejects an archive without its declared manifest instead of guessing", async () => {
     await expect(twitterArchiveEntriesToConversation([
       { path: "data/tweets.js", text: "window.YTD.tweets.part0 = []" },

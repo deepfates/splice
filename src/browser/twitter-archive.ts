@@ -63,7 +63,7 @@ export interface TwitterArchiveTurnMeta {
 
 export interface TwitterArchiveTurnPayload {
   text: string;
-  message: unknown;
+  message: string;
 }
 
 export interface TwitterArchiveBrowserStats {
@@ -93,7 +93,6 @@ interface ArchiveRecord {
   text: string;
   parentId: string | null;
   createdAt: string | null;
-  raw: Record<string, unknown>;
 }
 
 interface AccountIdentity {
@@ -219,7 +218,7 @@ function normalizeRecord(value: unknown, sourceKind: "tweets" | "like"): Archive
       || candidate.retweeted_status_id_str !== undefined
       ? "retweet"
       : "tweet";
-  return { id, kind, text, parentId, createdAt, raw: candidate };
+  return { id, kind, text, parentId, createdAt };
 }
 
 function compareRecords(a: ArchiveRecord, b: ArchiveRecord): number {
@@ -376,7 +375,10 @@ export async function twitterArchiveEntriesToConversation(
       id,
       loomId,
       parentId: heldParent,
-      payload: { text: record.text, message: record.raw },
+      // A browser host may sync this Loom. Carry the exact readable text and
+      // explicit provenance below, not the archive's arbitrary provider object
+      // (which can contain incidental fields the review surface never shows).
+      payload: { text: record.text, message: record.text },
       meta: {
         role: record.kind === "tweet" ? "user" : "artifact",
         author: sourceActor(record, identity.ownerHandle),

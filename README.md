@@ -42,7 +42,7 @@ selection and persistence.
 ```ts
 import { twitterArchiveEntriesToConversation } from "@deepfates/splice/browser";
 
-const { snapshot, stats } = twitterArchiveEntriesToConversation([
+const { snapshot, stats } = await twitterArchiveEntriesToConversation([
   { path: "data/manifest.js", text: manifestText },
   { path: "data/account.js", text: accountText },
   { path: "data/tweets.js", text: tweetsText },
@@ -52,7 +52,10 @@ const { snapshot, stats } = twitterArchiveEntriesToConversation([
 
 The adapter parses Twitter's JavaScript-wrapped JSON as data with JSON5; it
 never evaluates archive JavaScript. Media members are deliberately outside
-this text-review contract.
+this text-review contract. Its syncable Loom contains exact readable text plus
+explicit record/parent/kind/actor/time provenance, not arbitrary provider
+fields; the original archive remains authoritative for data outside that
+projection.
 
 Reddit and Hugging Face dataset adapters remain future work.
 
