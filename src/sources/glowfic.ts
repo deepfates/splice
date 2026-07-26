@@ -680,6 +680,13 @@ export interface MultiCharacterResult {
   character: GlowficCharacter;
   /** Array of conversation segments, each is [user, assistant] pairs */
   conversations: ChatMessage[][];
+  /**
+   * Source thread id per conversation, index-aligned with `conversations`.
+   * Held-out splits must be taken by thread: conversations from one thread
+   * share a scene and a cast, so splitting within a thread leaks context
+   * across the boundary and the eval set flatters the model.
+   */
+  threadIds: string[];
   /** Total message count across all conversations */
   messageCount: number;
 }
@@ -749,6 +756,7 @@ export function segmentBoardByAllCharacters(
 
     // Collect all conversation segments for this character
     const conversations: ChatMessage[][] = [];
+    const threadIds: string[] = [];
     let messageCount = 0;
 
     for (const thread of threads) {
@@ -763,6 +771,7 @@ export function segmentBoardByAllCharacters(
       for (const msgs of segments) {
         if (msgs.length > 0) {
           conversations.push(msgs);
+          threadIds.push(String(thread.id));
           messageCount += msgs.length;
         }
       }
@@ -773,6 +782,7 @@ export function segmentBoardByAllCharacters(
       results.push({
         character: char,
         conversations,
+        threadIds,
         messageCount,
       });
     }

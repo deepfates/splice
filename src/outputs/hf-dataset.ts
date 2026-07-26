@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { Level, ChatMessage } from "../core/types.js";
@@ -36,6 +37,11 @@ export interface HuggingFaceDatasetOptions {
   dryRun: boolean;
   /** Logger function */
   logger: (l: Level, m: string) => void;
+  /**
+   * Fraction of threads held out for validation. Default 0.05. Set 0 to write
+   * a single train split.
+   */
+  validFraction?: number;
 }
 
 /**
@@ -48,6 +54,8 @@ export interface CharacterDatasetMeta {
   author: string | null;
   post_count: number;
   conversation_count: number;
+  train_conversation_count?: number;
+  valid_conversation_count?: number;
   message_count: number;
   source: string;
   source_url: string;
@@ -68,6 +76,48 @@ function generateCharacterSystemPrompt(character: GlowficCharacter): string {
 }
 
 /**
+ * Assign each conversation to train or valid, by thread.
+ *
+ * Splitting by conversation would leak: conversations from one thread share a
+ * scene and a cast, so a held-out conversation is largely predictable from its
+ * training-set siblings and eval loss flatters the model. Threads are assigned
+ * by hash of id, so the split is stable across runs and identical for every
+ * character that appears in the same thread.
+ */
+function splitByThread(
+  result: MultiCharacterResult,
+  validFraction: number,
+): { train: ChatMessage[][]; valid: ChatMessage[][] } {
+  const train: ChatMessage[][] = [];
+  const valid: ChatMessage[][] = [];
+  if (validFraction <= 0) return { train: result.conversations, valid };
+
+  // Rank this character's own threads, rather than hashing thread ids against
+  // a global cutoff. Characters differ enormously in thread spread — some
+  // appear in 150 threads, some in 3 — so a global fraction leaves the narrow
+  // ones with no held-out data at all. Ranking within the character keeps the
+  // split deterministic while guaranteeing coverage.
+  const threads = Array.from(new Set(result.threadIds ?? []));
+  if (threads.length < 3) return { train: result.conversations, valid };
+
+  const ranked = threads
+    .map((id) => ({
+      id,
+      key: createHash("sha1").update(`split:${id}`).digest("hex"),
+    }))
+    .sort((a, b) => a.key.localeCompare(b.key));
+  const take = Math.max(1, Math.round(threads.length * validFraction));
+  const heldOut = new Set(ranked.slice(0, take).map((t) => t.id));
+
+  for (let i = 0; i < result.conversations.length; i++) {
+    const threadId = result.threadIds?.[i] ?? String(i);
+    (heldOut.has(threadId) ? valid : train).push(result.conversations[i]);
+  }
+  if (!train.length) return { train: result.conversations, valid: [] };
+  return { train, valid };
+}
+
+/**
  * Write a single character's dataset as OpenAI JSONL.
  */
 async function writeCharacterDataset(
@@ -77,29 +127,33 @@ async function writeCharacterDataset(
   sourceUrl: string,
   logger: (l: Level, m: string) => void,
   dryRun: boolean,
+  validFraction: number,
 ): Promise<CharacterDatasetMeta> {
   // Generate character-specific system prompt
   const systemMessage = generateCharacterSystemPrompt(result.character);
   const trainPath = path.join(charDir, "train.jsonl");
+  const validPath = path.join(charDir, "valid.jsonl");
   const metaPath = path.join(charDir, "metadata.json");
+  const { train, valid } = splitByThread(result, validFraction);
 
   if (dryRun) {
-    logger("info", `(dry-run) would write ${result.conversations.length} conversations to ${trainPath}`);
+    logger("info", `(dry-run) would write ${train.length} train / ${valid.length} valid conversations to ${charDir}`);
   } else {
     await ensureDir(charDir);
-    
-    // Write JSONL
-    const fh = await fs.open(trainPath, "w");
-    for (const msgs of result.conversations) {
-      const record = {
-        messages: [
-          { role: "system", content: systemMessage },
-          ...msgs,
-        ],
-      };
-      await fh.write(JSON.stringify(record) + "\n");
-    }
-    await fh.close();
+
+    const writeSplit = async (file: string, convs: ChatMessage[][]) => {
+      if (!convs.length) return;
+      const fh = await fs.open(file, "w");
+      for (const msgs of convs) {
+        const record = {
+          messages: [{ role: "system", content: systemMessage }, ...msgs],
+        };
+        await fh.write(JSON.stringify(record) + "\n");
+      }
+      await fh.close();
+    };
+    await writeSplit(trainPath, train);
+    await writeSplit(validPath, valid);
   }
 
   const meta: CharacterDatasetMeta = {
@@ -109,6 +163,8 @@ async function writeCharacterDataset(
     author: result.character.author,
     post_count: result.character.postCount,
     conversation_count: result.conversations.length,
+    train_conversation_count: train.length,
+    valid_conversation_count: valid.length,
     message_count: result.messageCount,
     source: sourceName,
     source_url: sourceUrl,
@@ -261,6 +317,7 @@ export async function writeHuggingFaceDataset(
   opts: HuggingFaceDatasetOptions,
 ): Promise<{ characterCount: number; conversationCount: number }> {
   const { outDir, sourceName, sourceUrl, dryRun, logger } = opts;
+  const validFraction = opts.validFraction ?? 0.05;
   const charactersDir = path.join(outDir, "characters");
 
   logger("info", `Writing HuggingFace dataset for ${results.length} characters`);
@@ -283,6 +340,7 @@ export async function writeHuggingFaceDataset(
       sourceUrl,
       logger,
       dryRun,
+      validFraction,
     );
     characterMetas.push(meta);
     totalConversations += result.conversations.length;

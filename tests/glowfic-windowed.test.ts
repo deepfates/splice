@@ -14,6 +14,7 @@ import {
   type GlowThread,
   type GlowPost,
 } from "../src/sources/glowfic.js";
+import type { ChatMessage } from "../src/core/types.js";
 
 function post(character: string | null, content: string): GlowPost {
   return {
@@ -213,5 +214,67 @@ describe("extractUniqueCharacters", () => {
     expect(carissa).toHaveLength(1);
     expect(carissa[0].postCount).toBe(3);
     expect(chars).toHaveLength(2);
+  });
+});
+
+describe("thread-level holdout", () => {
+  // Conversations from one thread share a scene and cast, so splitting within
+  // a thread leaks. Ranking threads per character (rather than hashing against
+  // a global cutoff) is what keeps narrow characters from getting no eval set.
+  it("holds out whole threads, and covers narrow characters", async () => {
+    const { writeHuggingFaceDataset } =
+      await import("../src/outputs/hf-dataset.js");
+    const conv = (n: string): ChatMessage[] => [
+      { role: "user", content: `to ${n}` },
+      { role: "assistant", content: `from ${n}` },
+    ];
+    const wide = {
+      character: {
+        id: "Wide",
+        displayName: "Wide",
+        handle: null,
+        author: null,
+        postCount: 40,
+      },
+      conversations: Array.from({ length: 20 }, (_, i) => conv(`w${i}`)),
+      threadIds: Array.from({ length: 20 }, (_, i) => `t${i % 10}`),
+      messageCount: 40,
+    };
+    const narrow = {
+      character: {
+        id: "Narrow",
+        displayName: "Narrow",
+        handle: null,
+        author: null,
+        postCount: 8,
+      },
+      conversations: Array.from({ length: 4 }, (_, i) => conv(`n${i}`)),
+      threadIds: ["a", "a", "b", "c"],
+      messageCount: 8,
+    };
+
+    const { mkdtemp, readFile } = await import("node:fs/promises");
+    const os = await import("node:os");
+    const pathMod = await import("node:path");
+    const dir = await mkdtemp(pathMod.join(os.tmpdir(), "splice-split-"));
+    await writeHuggingFaceDataset([wide as never, narrow as never], {
+      outDir: dir,
+      sourceName: "test",
+      sourceUrl: "test",
+      dryRun: false,
+      logger: () => {},
+      validFraction: 0.2,
+    });
+
+    const metas = JSON.parse(
+      await readFile(pathMod.join(dir, "characters.json"), "utf8"),
+    );
+    for (const m of metas) {
+      expect(m.valid_conversation_count).toBeGreaterThan(0);
+      expect(m.train_conversation_count).toBeGreaterThan(0);
+      expect(m.train_conversation_count + m.valid_conversation_count).toBe(
+        m.conversation_count,
+      );
+    }
   });
 });
