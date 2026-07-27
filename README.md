@@ -1,10 +1,13 @@
 # 🫚 splice
 
-Convert social/chat archives into normalized threads and export to Markdown, OAI JSONL, JSON (normalized items), and ShareGPT. Modular TypeScript CLI and library with extensible sources → transforms → outputs.
+Convert social, chat, agent-session, and OCR archives into inspectable threads,
+append-only Lync histories, readable Markdown, and training data. Splice is a
+modular TypeScript CLI and library with explicit sources → transforms → outputs.
 
 - Idiomatic CLI (clig.dev principles)
 - Modular architecture:
-  - sources: Twitter/X archives and Bluesky repo CAR exports (text-first; blobs soon), ChatGPT, etc. next
+  - sources: Twitter/X archives, Bluesky repo CAR exports, Glowfic, ChatGPT,
+    Claude.ai, Codex, Claude Code, OCR page sets, tweet-embed caches, and raw Lync
   - transforms: filtering, grouping into threads/conversations, text cleaning
   - outputs: Markdown, OAI JSONL, JSONL (normalized items), ShareGPT
 - Library API to compose your own pipeline or plug in proprietary adapters
@@ -23,8 +26,38 @@ Today it supports:
 - **Twitter/X** — Local archive exports (ZIP extracted)
 - **Bluesky** — AT Protocol CAR file exports with optional API enrichment
 - **Glowfic** — Collaborative fiction threads, sections, or boards via URL
+- **ChatGPT and Claude.ai** — Exported conversation graphs as real branching Lync looms
+- **Codex and Claude Code** — Deterministic private session-tree intake and local search
+- **OCR page sets and tweet-embed caches** — Deterministic raw Lync importers
+- **Raw Lync** — Verification, readable projection, and SFT/preference export without reminting source identity
 
-Next: ChatGPT, Reddit, Hugging Face datasets.
+The `@deepfates/splice/browser` export also provides a filesystem-free Twitter
+archive adapter for local applications. It accepts decoded members from an
+extracted archive or ZIP and returns one deterministic conversation loom: a
+visible corpus root, held reply threads, reviewable likes/retweets, exact source
+record IDs, and complete malformed/unresolved-parent accounting. It performs no
+I/O, network requests, or logging; the host application owns private file
+selection and persistence.
+
+```ts
+import { twitterArchiveEntriesToConversation } from "@deepfates/splice/browser";
+
+const { snapshot, stats } = await twitterArchiveEntriesToConversation([
+  { path: "data/manifest.js", text: manifestText },
+  { path: "data/account.js", text: accountText },
+  { path: "data/tweets.js", text: tweetsText },
+  { path: "data/like.js", text: likesText },
+]);
+```
+
+The adapter parses Twitter's JavaScript-wrapped JSON as data with JSON5; it
+never evaluates archive JavaScript. Media members are deliberately outside
+this text-review contract. Its syncable Loom contains exact readable text plus
+explicit record/parent/kind/actor/time provenance, not arbitrary provider
+fields; the original archive remains authoritative for data outside that
+projection.
+
+Reddit and Hugging Face dataset adapters remain future work.
 
 This library started life as a Python script. This is a TypeScript rewrite where development will continue. It has powered projects like [deeperfates.com](https://deeperfates.com), [keltham.lol](https://keltham.lol), and [youaretheassistantnow.com](https://youaretheassistantnow.com).
 
@@ -33,7 +66,7 @@ More context: https://deepfates.com/convert-your-twitter-archive-into-training-d
 ## Quick start (CLI)
 
 Requirements:
-- Node.js 18+ (tested with recent LTS)
+- Node.js 22+
 - For direct execution: `tsx` (installed automatically with `npx`)
 
 Run with tsx (no build needed):
@@ -44,10 +77,10 @@ Run the published CLI (after install):
 
     npx splice --source /path/to/twitter-archive --out ./out
 
-The source checkout is currently version 0.3.0, while the npm package remains
-at 0.1.1 pending an owner-approved release. Use the source checkout for the
-Lync, session-import, and session-search commands documented below; do not
-assume an older published CLI contains them.
+The source checkout is the 0.4.0 release candidate and targets
+`@deepfates/lync` 0.4.0. The npm package remains at 0.1.1. Use the source
+checkout for the Lync, session-import, and session-search commands documented
+below; do not assume the older published CLI contains them.
 
 Build then run with Node:
 
@@ -492,12 +525,18 @@ Watch tests:
 
 ## Roadmap (short)
 
-- More inputs: Reddit, ChatGPT, HF datasets
+- More inputs: Reddit and Hugging Face datasets
 - Checkpointing and resumable pipelines (JSONL-based manifests)
 - More outputs: SQLite/Parquet/CSV
 - Blob fetching for Bluesky media
 - Better selection: persona/character filters, time ranges
 - Improved role attribution and metadata preservation
+
+## Work tracking
+
+Project-owned implementation work is tracked in `.tickets/`; run `tk list`
+from this repository to inspect it. Cross-project corpus coordination remains
+in the workshop root ledger.
 
 ## License
 

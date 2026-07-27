@@ -61,7 +61,7 @@ export function applyFilters(
   return items.filter((it) => {
     // Always preserve fetched parent posts (needed for conversation context)
     if (it.source === "bluesky:fetched") return true;
-    
+
     const t = new Date(it.createdAt).getTime();
     if (!(t >= sinceTime && t <= untilTime)) return false;
     if (opts.excludeRt && isRetweet(it.text)) return false;
@@ -116,9 +116,7 @@ export function groupThreadsAndConversations(
     }
     for (const c of chain) processed.add(c.id);
 
-    const allSelfPosts = chain.every((c) =>
-      SELF_POST_SOURCES.has(c.source),
-    );
+    const allSelfPosts = chain.every((c) => SELF_POST_SOURCES.has(c.source));
 
     // Check if this is a self-thread (all tweets are self-replies)
     // A tweet is a self-reply if:
@@ -179,6 +177,40 @@ export function inferRole(it: ContentItem): Role {
   if (it.source === "bluesky:post") return "assistant";
 
   return "user";
+}
+
+/**
+ * Structural problems a *dialogue* training set will be rejected for. Empty
+ * array = valid.
+ *
+ * Deliberately a utility rather than a rule applied by the writers, because
+ * "valid" is not universal here. A glowfic character set models one speaker
+ * responding to others, so a record beginning with `assistant` has nothing to
+ * condition on and every framework rejects it. A Twitter or Bluesky
+ * self-archive models one person's output — `inferRole` marks all of it
+ * `assistant` on purpose — so an assistant-only record is the intended shape,
+ * not a defect. Callers that want dialogue shape should gate on this; callers
+ * exporting a self-archive should not.
+ */
+export function validateConversation(messages: ChatMessage[]): string[] {
+  const problems: string[] = [];
+  if (!messages.length) return ["no messages"];
+  if (messages.some((m) => !m.content || !m.content.trim())) {
+    problems.push("empty content");
+  }
+  const body = messages.filter((m) => m.role !== ("system" as Role));
+  if (!body.length) return [...problems, "no turns"];
+  if (body[0].role !== "user") problems.push(`starts with ${body[0].role}`);
+  if (body[body.length - 1].role !== "assistant") {
+    problems.push(`ends with ${body[body.length - 1].role}`);
+  }
+  for (let i = 1; i < body.length; i++) {
+    if (body[i].role === body[i - 1].role) {
+      problems.push(`consecutive ${body[i].role}`);
+      break;
+    }
+  }
+  return problems;
 }
 
 export function messagesFromConversation(items: ContentItem[]): ChatMessage[] {

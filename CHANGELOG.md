@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 This project follows Conventional Commits and semantic versioning.
 Dates are in YYYY-MM-DD.
 
+## [Unreleased]
+
+- Added the filesystem-free `@deepfates/splice/browser` Twitter archive
+  adapter. Local applications can turn decoded ZIP/directory members into one
+  deterministic conversation loom without uploading content or evaluating the
+  archive's JavaScript wrappers.
+- The browser projection retains every readable tweet, retweet, and like,
+  preserves held reply topology and exact external-parent IDs, and reports
+  malformed records and unresolved replies explicitly.
+- Syncable browser Looms carry readable text and explicit provenance without
+  copying arbitrary unpresented provider fields from archive records.
+
+## [0.4.0] - Unpublished release candidate
+
+This release candidate targets `@deepfates/lync` 0.4.0 and Node.js 22 or newer.
+Registry publication remains sequenced after the Lync 0.4.0 publication.
+
+### Added
+- Deterministic raw Lync importers for Twitter archives, Glowfic, OCR page sets,
+  tweet-embed caches, Codex sessions, Claude Code sessions, ChatGPT exports, and
+  Claude.ai exports.
+- Conversation-loom adapters that preserve branching message ancestry.
+- Private agent-session tree intake and bounded local search.
+- Raw Lync Markdown, SFT, and preference projections that retain source event
+  identities and standard selection annotations.
+
+### Changed
+- Lync output is serialized and independently parsed through the reference
+  implementation; unsafe or lossy output fails loudly.
+- Repeated Claude session identities are represented without weakening
+  same-id conflict detection.
+- Training projection understands structured message events and ignores
+  tool-only records without losing surrounding context.
+
+### Fixed
+- Cycle verification remains linear at large-file and large-line boundaries.
+- Empty public message records and stale tweet-cache size assumptions no longer
+  corrupt otherwise valid intake.
+
 ## [0.3.0] - 2026-01-04
 
 ### Added
@@ -50,6 +89,8 @@ Dates are in YYYY-MM-DD.
 - JSON now included in default output formats
 
 [0.3.0]: https://github.com/deepfates/splice/compare/v0.2.0...v0.3.0
+
+[0.4.0]: https://github.com/deepfates/splice/compare/v0.3.0...HEAD
 
 [0.2.0]: https://github.com/deepfates/splice/compare/v0.1.2...v0.2.0
 

@@ -19,6 +19,7 @@ import type {
   Role,
 } from "../core/types.js";
 import { toIso } from "../core/types.js";
+import { validateConversation } from "../transforms/core.js";
 
 import {
   fetchStructure,
@@ -107,6 +108,33 @@ export async function fetchGlowficThreadsMany(
   for (let k = 0; k < conc; k++) pending.push(worker());
   await Promise.all(pending);
   return out;
+}
+
+/**
+ * Load glowfic-dl `thread.json` exports from a directory.
+ *
+ * Fetching a board re-downloads every thread, which is hours against a host
+ * that rate-limits at ~2 requests/second. Once threads are on disk there is
+ * no reason to pay that again to rebuild a dataset from them.
+ */
+export async function loadGlowficThreadsFromDir(
+  dir: string,
+  logger: (l: Level, m: string) => void = () => {},
+): Promise<GlowThread[]> {
+  const { readdir, readFile } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const names = (await readdir(dir)).filter((n) => n.endsWith(".json"));
+  const threads: GlowThread[] = [];
+  for (const name of names) {
+    try {
+      const data = JSON.parse(await readFile(join(dir, name), "utf8"));
+      if (data && Array.isArray(data.posts)) threads.push(data as GlowThread);
+    } catch (err) {
+      logger("warn", `Skipping ${name}: ${(err as Error).message}`);
+    }
+  }
+  logger("info", `Loaded ${threads.length} thread(s) from ${dir}`);
+  return threads;
 }
 
 /* -------------------------- Normalization to Items ------------------------- */
@@ -268,8 +296,31 @@ export type AssistantMatcher =
       displayName?: string | RegExp;
       handle?: string | RegExp;
       author?: string | RegExp;
+      /**
+       * Match posts written with no character attached — the unattributed
+       * scene narration. This is a large and distinct voice (it is the second
+       * most frequent "speaker" in a typical board) and cannot be selected by
+       * name, since it has none.
+       */
+      narrator?: boolean;
     }
   | ((post: GlowPost) => boolean);
+
+/** Display name used for posts written without a character attached. */
+export const NARRATOR = "(narrator/none)";
+
+/** True when a post is attributed to a named character. */
+export function postSpeakerNamed(post: GlowPost): boolean {
+  return Boolean(
+    (post.character_display_name || "").trim() ||
+    (post.character_handle || "").trim(),
+  );
+}
+
+/** The speaker of a post: its character's display name, or the narrator sentinel. */
+export function postSpeaker(post: GlowPost): string {
+  return (post.character_display_name || "").trim() || NARRATOR;
+}
 
 /**
  * Returns true if a glowfic Post should be considered assistant according to the matcher.
@@ -285,16 +336,20 @@ export function isAssistantPost(
   // Predicate
   if (typeof matcher === "function") return !!matcher(post);
 
-  // String: match display name or handle case-insensitive
+  // String: match display name or handle case-insensitive.
+  // Coerced, because `display && ...` yields "" for an unattributed post and
+  // this function is declared to return a boolean.
   if (typeof matcher === "string") {
     const needle = matcher.trim().toLowerCase();
-    return (
+    return Boolean(
       (display && display.toLowerCase() === needle) ||
-      (handle && handle.toLowerCase() === needle)
+      (handle && handle.toLowerCase() === needle),
     );
   }
 
   // Object form
+  if (matcher.narrator && !display && !handle) return true;
+
   const matchStr = (val: string | null, target?: string | RegExp): boolean => {
     if (!target) return false;
     if (!val) return false;
@@ -319,6 +374,124 @@ export type ConversationOptions = {
   mergeConsecutive?: boolean; // merge adjacent messages from same role
   trimToLastAssistant?: boolean; // drop trailing user tail if assistant appears earlier
 };
+
+export type WindowedConversationOptions = ConversationOptions & {
+  /**
+   * Approximate word budget per conversation. The window closes at the first
+   * assistant turn after the budget is reached, so each conversation carries
+   * several assistant turns rather than one. Default 1200.
+   */
+  windowWords?: number;
+  /**
+   * Attach each speaker's display name to their user message as `name`.
+   * Default true.
+   */
+  includeNames?: boolean;
+  /**
+   * Guarantee strictly alternating roles, ending on `assistant`. Default true.
+   *
+   * Consecutive `assistant` turns occur naturally: a post between two of the
+   * target's posts can clean to empty and be dropped, leaving them adjacent.
+   * Training frameworks reject such a record, so runs are merged unless this
+   * is disabled. A merged turn keeps its `name` only when every message in
+   * the run had the same one.
+   */
+  strict?: boolean;
+};
+
+const DEFAULT_WINDOW_WORDS = 1200;
+
+/**
+ * Slice a thread into multi-turn conversations.
+ *
+ * `segmentedConversationsFromGlowficThread` emits strictly two messages per
+ * conversation: every buffered non-assistant post merged into one anonymous
+ * `user` turn, then one `assistant` turn. Both builders consume each post
+ * exactly once, so this is a packaging difference, not a volume one. What
+ * changes is what survives packaging, on a board where threads average around
+ * eight characters and a target's posts are separated by a median of one
+ * other post:
+ *
+ * 1. Merging discards who spoke, so a scene with seven participants trains as
+ *    an undifferentiated wall of text. Here each speaker keeps their identity
+ *    via `ChatMessage.name`.
+ * 2. Two-message conversations cannot represent turn-taking. A window holding
+ *    several assistant turns preserves the back-and-forth the thread actually
+ *    had — measured over a real 469-thread cache, ~7 assistant turns per
+ *    conversation instead of exactly one.
+ */
+export function windowedConversationsFromGlowficThread(
+  thread: GlowThread,
+  assistant: AssistantMatcher,
+  options?: WindowedConversationOptions,
+): ChatMessage[][] {
+  const markdown = options?.markdown !== false;
+  const includeNames = options?.includeNames !== false;
+  const budget = options?.windowWords ?? DEFAULT_WINDOW_WORDS;
+
+  const msgs: ChatMessage[] = [];
+  for (const p of thread.posts || []) {
+    const raw = markdown
+      ? glowHtmlToMarkdown(p.content ?? "")
+      : (p.content ?? "");
+    const content = (raw || "").trim();
+    if (!content) continue;
+    const isAsst = isAssistantPost(p, assistant);
+    const msg: ChatMessage = {
+      role: isAsst ? "assistant" : "user",
+      content,
+    };
+    if (!isAsst && includeNames) msg.name = postSpeaker(p);
+    msgs.push(msg);
+  }
+
+  const conversations: ChatMessage[][] = [];
+  let window: ChatMessage[] = [];
+  let words = 0;
+
+  const flush = () => {
+    // A usable example ends on the assistant and has something to respond to.
+    while (window.length && window[window.length - 1].role !== "assistant") {
+      window.pop();
+    }
+    const hasAsst = window.some((m) => m.role === "assistant");
+    const hasUser = window.some((m) => m.role === "user");
+    if (hasAsst && hasUser) conversations.push(window);
+    window = [];
+    words = 0;
+  };
+
+  for (const m of msgs) {
+    // Skip assistant turns before any user turn: nothing to respond to yet.
+    if (!window.length && m.role === "assistant") continue;
+    window.push(m);
+    words += m.content.split(/\s+/).length;
+    if (words >= budget && m.role === "assistant") flush();
+  }
+  flush();
+
+  const strict = options?.strict !== false;
+  return strict ? conversations.map(mergeAdjacentSameRole) : conversations;
+}
+
+/**
+ * Collapse runs of same-role messages. Names are dropped on merge, since a
+ * merged turn no longer has a single speaker — use this only for training
+ * stacks that require strict role alternation.
+ */
+function mergeAdjacentSameRole(messages: ChatMessage[]): ChatMessage[] {
+  const out: ChatMessage[] = [];
+  for (const m of messages) {
+    const prev = out[out.length - 1];
+    if (prev && prev.role === m.role) {
+      prev.content = `${prev.content}\n\n${m.content}`;
+      delete prev.name;
+    } else {
+      out.push({ ...m });
+    }
+  }
+  return out;
+}
 
 /**
  * Convert a single Glowfic thread into messages with the chosen assistant character.
@@ -440,17 +613,24 @@ export function extractUniqueCharacters(
       const handle = (post.character_handle || "").trim();
       const displayName = (post.character_display_name || "").trim();
       const author = (post.author || "").trim();
-      
-      // Use handle as primary key, fall back to display name
-      const id = handle || displayName || author || "unknown";
+
+      // Key on display name, not handle. A glowfic handle identifies an
+      // icon/mood ("loves-her-strings", "abide-the-twin-damnation"), not a
+      // person — keying on it splits one character into several. Carissa
+      // Sevar carries three handles across a real board and fragments into
+      // three "characters" of 5,339 / 2,619 / 940 posts instead of one 8,898.
+      // Display name is the identity; handle and author are attributes of a
+      // post, and the same character written by several authors is one
+      // character.
+      const id = displayName || handle || author || "unknown";
       if (!id || id === "unknown") continue;
 
       const existing = charMap.get(id);
       if (existing) {
         existing.postCount++;
-        // Fill in missing fields if available
         if (!existing.handle && handle) existing.handle = handle;
-        if (!existing.displayName && displayName) existing.displayName = displayName;
+        if (!existing.displayName && displayName)
+          existing.displayName = displayName;
         if (!existing.author && author) existing.author = author;
       } else {
         charMap.set(id, {
@@ -475,13 +655,20 @@ export interface MultiCharacterResult {
   character: GlowficCharacter;
   /** Array of conversation segments, each is [user, assistant] pairs */
   conversations: ChatMessage[][];
+  /**
+   * Source thread id per conversation, index-aligned with `conversations`.
+   * Held-out splits must be taken by thread: conversations from one thread
+   * share a scene and a cast, so splitting within a thread leaks context
+   * across the boundary and the eval set flatters the model.
+   */
+  threadIds: string[];
   /** Total message count across all conversations */
   messageCount: number;
 }
 
 /**
  * Segment all threads for each unique character as the assistant.
- * 
+ *
  * @param threads - Pre-fetched Glowfic threads
  * @param options - Configuration options
  * @returns Array of results per character, sorted by conversation count
@@ -491,55 +678,95 @@ export function segmentBoardByAllCharacters(
   options?: {
     minPosts?: number;
     markdown?: boolean;
+    /** Emit multi-turn windows with speaker names. Default true. */
+    windowed?: boolean;
+    windowWords?: number;
+    /**
+     * Include the unattributed narrator as a target. Default true.
+     * `extractUniqueCharacters` keys on handle/display/author, so narration
+     * would otherwise scatter across every author who wrote any, and the
+     * world voice — usually one of the largest on a board — is unreachable.
+     */
+    includeNarrator?: boolean;
   },
 ): MultiCharacterResult[] {
   const minPosts = options?.minPosts ?? 10;
+  const windowed = options?.windowed !== false;
   const characters = extractUniqueCharacters(threads);
-  
+
+  if (options?.includeNarrator !== false) {
+    const narratorPosts = threads.reduce(
+      (n, t) => n + (t.posts || []).filter((p) => !postSpeakerNamed(p)).length,
+      0,
+    );
+    if (narratorPosts >= minPosts) {
+      characters.push({
+        id: NARRATOR,
+        displayName: NARRATOR,
+        handle: null,
+        author: null,
+        postCount: narratorPosts,
+      } as GlowficCharacter);
+    }
+  }
+
   const results: MultiCharacterResult[] = [];
-  
+
   for (const char of characters) {
     // Skip characters below threshold
     if (char.postCount < minPosts) continue;
-    
+
     // Build a matcher for this character
     const matcher: AssistantMatcher = (post) => {
-      const postHandle = (post.character_handle || "").trim().toLowerCase();
-      const postDisplay = (post.character_display_name || "").trim().toLowerCase();
+      if (char.id === NARRATOR) return !postSpeakerNamed(post);
       const charId = char.id.toLowerCase();
-      return postHandle === charId || postDisplay === charId;
+      const postDisplay = (post.character_display_name || "")
+        .trim()
+        .toLowerCase();
+      // Display name identifies the character; fall back to handle only for
+      // posts that carry no display name at all.
+      if (postDisplay) return postDisplay === charId;
+      return (post.character_handle || "").trim().toLowerCase() === charId;
     };
-    
+
     // Collect all conversation segments for this character
     const conversations: ChatMessage[][] = [];
+    const threadIds: string[] = [];
     let messageCount = 0;
-    
+
     for (const thread of threads) {
-      const segments = segmentedConversationsFromGlowficThread(
-        thread,
-        matcher,
-        { markdown: options?.markdown !== false },
-      );
+      const segments = windowed
+        ? windowedConversationsFromGlowficThread(thread, matcher, {
+            markdown: options?.markdown !== false,
+            windowWords: options?.windowWords,
+          })
+        : segmentedConversationsFromGlowficThread(thread, matcher, {
+            markdown: options?.markdown !== false,
+          });
       for (const msgs of segments) {
         if (msgs.length > 0) {
           conversations.push(msgs);
+          threadIds.push(String(thread.id));
           messageCount += msgs.length;
         }
       }
     }
-    
+
     // Only include if we got any conversations
     if (conversations.length > 0) {
       results.push({
         character: char,
         conversations,
+        threadIds,
         messageCount,
       });
     }
   }
-  
+
   // Sort by number of conversations descending
-  return results.sort((a, b) => b.conversations.length - a.conversations.length);
+  return results.sort(
+    (a, b) => b.conversations.length - a.conversations.length,
+  );
 }
 
 /* ------------------------------- SourceAdapter ---------------------------- */

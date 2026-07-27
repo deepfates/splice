@@ -11,10 +11,7 @@ import * as path from "node:path";
 export type Level = "debug" | "info" | "warn" | "error";
 
 export type SourceId =
-  | "twitter:tweet"
-  | "twitter:like"
-  | "glowfic:post"
-  | string;
+  "twitter:tweet" | "twitter:like" | "glowfic:post" | string;
 
 export interface MediaAttachment {
   id: string;
@@ -47,6 +44,14 @@ export type Role = "assistant" | "user";
 export interface ChatMessage {
   role: Role;
   content: string;
+  /**
+   * Optional speaker identity, passed through to the OpenAI/Harmony `name`
+   * field. Used when a conversation has more than two participants so the
+   * model can tell interlocutors apart — without baking a "Speaker:" prefix
+   * into `content`, which would train it to expect a prefix that will not
+   * exist at inference time.
+   */
+  name?: string;
 }
 
 /* -------------------------------- Logger --------------------------------- */
@@ -96,6 +101,7 @@ export type CLIOptions = {
   assistantRegex?: string; // regex (JS) on display name/handle/author
   // glowfic multi-character export
   glowficBoard?: string; // single board URL for multi-character export
+  glowficDir?: string; // directory of cached glowfic-dl thread.json exports
   allCharacters: boolean; // export for all characters
   minPosts: number; // minimum posts for character inclusion
 };
@@ -133,6 +139,7 @@ export function parseArgs(argv: string[]): CLIOptions {
     assistantRegex: undefined,
     // glowfic multi-character export
     glowficBoard: undefined,
+    glowficDir: undefined,
     allCharacters: false,
     minPosts: 10,
   };
@@ -215,6 +222,8 @@ export function parseArgs(argv: string[]): CLIOptions {
           opts.glowfic = list;
         }
       }
+    } else if (a === "--glowfic-dir") {
+      opts.glowficDir = args[++i];
     } else if (a === "--assistant") {
       opts.assistant = args[++i];
     } else if (a === "--assistant-regex" || a === "--assistant-re") {

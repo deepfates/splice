@@ -1,13 +1,14 @@
 {
   "name": "@deepfates/splice",
-  "version": "0.3.0",
-  "description": "splice \u2014 convert social/chat exports into normalized threads and export to Markdown and OAI JSONL",
+  "version": "0.4.0",
+  "description": "splice — convert social/chat exports into normalized threads and export to Markdown and OAI JSONL",
   "license": "MIT",
   "author": "",
   "type": "module",
   "main": "dist/index.js",
   "exports": {
-    ".": "./dist/index.js"
+    ".": "./dist/index.js",
+    "./browser": "./dist/browser.js"
   },
   "bin": {
     "splice": "dist/cli/splice.js"
@@ -21,12 +22,14 @@
   "scripts": {
     "start": "tsx src/cli/splice.ts",
     "dev": "tsx watch src/cli/splice.ts",
+    "prebuild": "npm run clean:dist",
     "build": "tsc -p tsconfig.json",
     "prepare": "npm run build",
     "test": "vitest run --reporter verbose",
     "test:watch": "vitest",
     "test:integration": "vitest run tests/integration/**/*.test.ts --reporter verbose",
-    "clean": "rm -rf dist out"
+    "clean:dist": "rm -rf dist",
+    "clean": "npm run clean:dist && rm -rf out"
   },
   "keywords": [
     "cli",
@@ -51,14 +54,15 @@
     "access": "public"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "dependencies": {
     "@atproto/api": "^0.18.0",
     "@atproto/repo": "^0.8.10",
+    "@deepfates/lync": "0.4.0",
     "cosmiconfig": "^9.0.0",
-    "@deepfates/lync": "0.3.0",
-    "glowfic-dl": "^0.2.1"
+    "glowfic-dl": "^0.2.1",
+    "json5": "^2.2.3"
   },
   "devDependencies": {
     "@types/node": "^22.7.4",
