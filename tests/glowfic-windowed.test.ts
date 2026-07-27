@@ -6,7 +6,6 @@ import { fileURLToPath } from "node:url";
 
 import {
   windowedConversationsFromGlowficThread,
-  validateConversation,
   segmentedConversationsFromGlowficThread,
   isAssistantPost,
   postSpeaker,
@@ -14,6 +13,7 @@ import {
   type GlowThread,
   type GlowPost,
 } from "../src/sources/glowfic.js";
+import { validateConversation } from "../src/transforms/core.js";
 import type { ChatMessage } from "../src/core/types.js";
 
 function post(character: string | null, content: string): GlowPost {

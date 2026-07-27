@@ -19,6 +19,7 @@ import type {
   Role,
 } from "../core/types.js";
 import { toIso } from "../core/types.js";
+import { validateConversation } from "../transforms/core.js";
 
 import {
   fetchStructure,
@@ -399,32 +400,6 @@ export type WindowedConversationOptions = ConversationOptions & {
 };
 
 const DEFAULT_WINDOW_WORDS = 1200;
-
-/**
- * Structural problems a training framework will reject. Empty array = valid.
- * Exported so callers can gate a write rather than discover it downstream as
- * an opaque "line N is not a valid record".
- */
-export function validateConversation(messages: ChatMessage[]): string[] {
-  const problems: string[] = [];
-  if (!messages.length) return ["no messages"];
-  if (messages.some((m) => !m.content || !m.content.trim())) {
-    problems.push("empty content");
-  }
-  const body = messages.filter((m) => m.role !== ("system" as Role));
-  if (!body.length) return [...problems, "no turns"];
-  if (body[0].role !== "user") problems.push(`starts with ${body[0].role}`);
-  if (body[body.length - 1].role !== "assistant") {
-    problems.push(`ends with ${body[body.length - 1].role}`);
-  }
-  for (let i = 1; i < body.length; i++) {
-    if (body[i].role === body[i - 1].role) {
-      problems.push(`consecutive ${body[i].role}`);
-      break;
-    }
-  }
-  return problems;
-}
 
 /**
  * Slice a thread into multi-turn conversations.
