@@ -54,6 +54,10 @@ import type {
   LyncObstacle,
   LyncParseResult,
 } from "@deepfates/lync/events";
+import {
+  presentLyncEvent,
+  resolveLyncPresentationProfiles,
+} from "@deepfates/lync/presentation";
 import { lyncLeaderboardView, lyncTranscriptView } from "@deepfates/lync/views";
 import type { LyncLeaderboardEntry, LyncScoreReference } from "@deepfates/lync/views";
 
@@ -215,29 +219,17 @@ function eligibleIndex(result: LyncParseResult): Map<string, EligibleEvent> {
   return index;
 }
 
-/** Read canonical artifact text without changing or reminting its source event. */
-function artifactText(ev: EligibleEvent): string | undefined {
-  const payload = ev.event.payload;
-  const text = payload["text"];
-  if (typeof text === "string" && text.length > 0) return text;
-  const fullText = payload["full_text"] ?? payload["fullText"];
-  if (typeof fullText === "string" && fullText.length > 0) return fullText;
-  const message = payload["message"];
-  if (typeof message === "string" && message.length > 0) return message;
-  if (!message || typeof message !== "object") return undefined;
-  const record = message as { text?: unknown; content?: unknown };
-  if (typeof record.text === "string" && record.text.length > 0) return record.text;
-  if (typeof record.content === "string" && record.content.length > 0) return record.content;
-  if (!Array.isArray(record.content)) return undefined;
-  const parts = record.content
-    .map((block) => {
-      if (typeof block === "string") return block;
-      if (!block || typeof block !== "object") return "";
-      const value = (block as { text?: unknown }).text;
-      return typeof value === "string" ? value : "";
-    })
-    .filter(Boolean);
-  return parts.length > 0 ? parts.join("") : undefined;
+/** Read content through Lync's exact presenter without reminting the event. */
+function artifactText(
+  ev: EligibleEvent,
+  profiles: Map<string, string>,
+): string | undefined {
+  const result = presentLyncEvent(ev.event, {
+    loomProfile: profiles.get(ev.id),
+  });
+  return result.status === "presented" && result.presentation.kind === "content"
+    ? result.presentation.text
+    : undefined;
 }
 
 function toSegment(ev: EligibleEvent, text: string): LyncTrainingSegment {
@@ -279,6 +271,7 @@ interface AssembledContext {
 function assembleContext(
   result: LyncParseResult,
   index: Map<string, EligibleEvent>,
+  profiles: Map<string, string>,
   head: string | undefined,
 ): AssembledContext {
   if (head === undefined) {
@@ -295,7 +288,7 @@ function assembleContext(
       suppressedOnPath.push(ev.id);
       continue;
     }
-    const text = artifactText(ev);
+    const text = artifactText(ev, profiles);
     if (text === undefined) continue;
     segments.push(toSegment(ev, text));
     contextIds.push(ev.id);
@@ -359,6 +352,9 @@ function stringSetSorted(value: unknown): string[] {
  */
 export function lyncToTrainingData(result: LyncParseResult): LyncTrainingResult {
   const index = eligibleIndex(result);
+  const profiles = resolveLyncPresentationProfiles(
+    [...index.values()].map((item) => item.event),
+  );
   const leaderboard = lyncLeaderboardView(result);
   const noTrain = noTrainTargets(index);
   const entriesById = new Map<string, LyncLeaderboardEntry>(
@@ -402,7 +398,7 @@ export function lyncToTrainingData(result: LyncParseResult): LyncTrainingResult 
       );
       continue;
     }
-    const text = artifactText(ev);
+    const text = artifactText(ev, profiles);
     if (text === undefined) {
       skip(id, "ineligible", "target has no readable text payload");
       continue;
@@ -411,7 +407,7 @@ export function lyncToTrainingData(result: LyncParseResult): LyncTrainingResult 
       skip(id, "no_train", "completion is a no-train target", noTrain.get(id)!);
       continue;
     }
-    const ctx = assembleContext(result, index, ev.event.parents[0]);
+    const ctx = assembleContext(result, index, profiles, ev.event.parents[0]);
     if (ctx.partial) {
       skip(
         id,
@@ -521,8 +517,8 @@ export function lyncToTrainingData(result: LyncParseResult): LyncTrainingResult 
           );
           continue;
         }
-        const cText = artifactText(cEv);
-        const rText = artifactText(rEv);
+        const cText = artifactText(cEv, profiles);
+        const rText = artifactText(rEv, profiles);
         if (cText === undefined || rText === undefined) {
           skipPair(
             "ineligible",
@@ -548,7 +544,7 @@ export function lyncToTrainingData(result: LyncParseResult): LyncTrainingResult 
           );
           continue;
         }
-        const ctx = assembleContext(result, index, cHead);
+        const ctx = assembleContext(result, index, profiles, cHead);
         if (ctx.partial) {
           skipPair(
             "partial_context",

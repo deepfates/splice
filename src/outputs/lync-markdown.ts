@@ -29,6 +29,10 @@ import * as path from "node:path";
 import { parseLyncFiles } from "@deepfates/lync/events";
 import type { LyncParseResult } from "@deepfates/lync/events";
 import {
+  presentLyncEvent,
+  resolveLyncPresentationProfiles,
+} from "@deepfates/lync/presentation";
+import {
   lyncBranchTreeView,
   lyncLeaderboardView,
   lyncTranscriptView,
@@ -179,6 +183,15 @@ export function renderLyncMarkdown(
   const nodes = new Map<string, LyncBranchTreeNode>(
     tree.nodes.map((n) => [n.id, n]),
   );
+  const presentationProfiles = resolveLyncPresentationProfiles(
+    [...nodes.values()].map((node) => node.event),
+  );
+  const presentationFor = (event: LyncBranchTreeNode["event"]) => {
+    const result = presentLyncEvent(event, {
+      loomProfile: presentationProfiles.get(event.id),
+    });
+    return result.status === "presented" ? result.presentation : null;
+  };
   const boardById = new Map<string, LyncLeaderboardEntry>(
     board.entries.map((e) => [e.targetId, e]),
   );
@@ -508,10 +521,11 @@ export function renderLyncMarkdown(
     const lines: string[] = [
       `[^${label}]: Alternative at this point (not taken), by ${ev.author.actor}${authorAxes(ev)}, ${ev.at} · ${inlineCode(shortId(sibId))}:`,
     ];
+    const readable = presentationFor(ev);
     if (node.payloadSuppressed) {
       lines.push(`    ${withheldNote(sibId)}`);
-    } else if (typeof ev.payload["text"] === "string") {
-      const quoted = escapeProse(ev.payload["text"]).split("\n");
+    } else if (readable) {
+      const quoted = escapeProse(readable.text).split("\n");
       lines.push(`    "${quoted.join("\n    ")}"`);
     } else {
       lines.push(`    ${inlineCode(JSON.stringify(ev.payload))}`);
@@ -563,10 +577,11 @@ export function renderLyncMarkdown(
         }
       }
       out.push(attributionLine(node, markers), "");
+      const readable = presentationFor(node.event);
       if (node.payloadSuppressed) {
         out.push(withheldNote(id), "");
-      } else if (typeof node.event.payload["text"] === "string") {
-        out.push(escapeProse(node.event.payload["text"]), "");
+      } else if (readable) {
+        out.push(escapeProse(readable.text), "");
       } else {
         out.push(...jsonBlock(node.event.payload), "");
       }

@@ -160,6 +160,65 @@ describe("nothing eligible is silently absent", () => {
   });
 });
 
+describe("kind-aware readable projection", () => {
+  it("renders known source contracts and does not dump incidental private fields", () => {
+    const source = [
+      {
+        v: 1,
+        id: "019800ca-0000-7000-8000-000000000001",
+        kind: "ocr/set",
+        at: "2026-07-01T00:00:00Z",
+        author: { actor: "ocr" },
+        parents: [],
+        payload: {
+          locator: "portable-set",
+          dir: "/Users/private/workstation/scans",
+          pages: 1,
+          documents: [],
+        },
+      },
+      {
+        v: 1,
+        id: "019800ca-0000-7000-8000-000000000002",
+        kind: "glowfic/post",
+        at: "2026-07-01T00:00:01Z",
+        author: { actor: "writer" },
+        parents: ["019800ca-0000-7000-8000-000000000001"],
+        payload: {
+          content: "<p>Public Glowfic prose.</p><script>privateRaw()</script>",
+          provider_response: "must not render",
+        },
+      },
+      {
+        v: 1,
+        id: "019800ca-0000-7000-8000-000000000003",
+        kind: "twitter/tweet-embed",
+        at: "2026-07-01T00:00:02Z",
+        author: { actor: "poster" },
+        parents: ["019800ca-0000-7000-8000-000000000002"],
+        payload: {
+          embed: { html: "<blockquote>Public embedded post.</blockquote>" },
+          cache_path: "/private/embed-cache",
+        },
+      },
+    ];
+    const parsed = parseLyncFiles([{
+      file: "source-kinds.lync",
+      bytes: `${source.map((event) => JSON.stringify(event)).join("\n")}\n`,
+    }]);
+
+    const render = renderLyncMarkdown(parsed, { title: "source kinds" });
+
+    expect(render.markdown).toContain("OCR set: portable-set");
+    expect(render.markdown).toContain("Public Glowfic prose.");
+    expect(render.markdown).toContain("Public embedded post.");
+    expect(render.markdown).not.toMatch(
+      /Users\/private|privateRaw|provider_response|private\/embed-cache/,
+    );
+    for (const event of source) expect(render.markdown).toContain(event.id);
+  });
+});
+
 describe("branches, annotations, suppression, conflicts", () => {
   it("the not-taken selected-against branch renders as a section with its annotation", async () => {
     const render = await renderFixture();

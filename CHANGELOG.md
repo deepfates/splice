@@ -7,6 +7,10 @@ Dates are in YYYY-MM-DD.
 
 ## [Unreleased]
 
+- Raw-Lync Markdown and training now consume
+  `@deepfates/lync/presentation` instead of maintaining their own shallow text
+  heuristics. Known source/profile contracts are allowlisted, source identity
+  is unchanged, and incidental raw fields do not enter readable or model text.
 - Added the filesystem-free `@deepfates/splice/browser` Twitter archive
   adapter. Local applications can turn decoded ZIP/directory members into one
   deterministic conversation loom without uploading content or evaluating the

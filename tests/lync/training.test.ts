@@ -193,6 +193,52 @@ describe("preference pairs", () => {
     expect(preferenceRows[0].chosen).toMatchObject({ event_id: B, text: TEXT_B });
     expect(preferenceRows[0].rejected).toMatchObject({ event_id: C, text: TEXT_C });
   });
+
+  it("uses the Lync presenter for heterogeneous source kinds without leaking raw fields", () => {
+    const [a, b, c, , selection] = fixtureEvents();
+    const heterogeneous = [
+      {
+        ...a,
+        kind: "glowfic/post",
+        payload: {
+          content: `<p>${TEXT_A}</p><script>privateRaw()</script>`,
+          private_metadata: "must not train",
+        },
+      },
+      {
+        ...b,
+        kind: "twitter/tweet-embed",
+        payload: {
+          embed: { html: `<blockquote>${TEXT_B}</blockquote>` },
+          provider_response: "must not train",
+        },
+      },
+      {
+        ...c,
+        kind: "ocr/page",
+        payload: {
+          text: TEXT_C,
+          workstation_path: "/private/scan/page-003.txt",
+        },
+      },
+      selection,
+    ];
+
+    const { sftRows, preferenceRows, stats } = training(
+      `${heterogeneous.map(splicedLine).join("\n")}\n`,
+    );
+
+    expect(stats.sft_rows).toBe(1);
+    expect(stats.preference_rows).toBe(1);
+    expect(sftRows[0].prompt).toEqual([
+      { actor: "deepfates", via: null, text: TEXT_A, event_id: A },
+    ]);
+    expect(preferenceRows[0].chosen).toMatchObject({ event_id: B, text: TEXT_B });
+    expect(preferenceRows[0].rejected).toMatchObject({ event_id: C, text: TEXT_C });
+    expect(JSON.stringify({ sftRows, preferenceRows })).not.toMatch(
+      /privateRaw|private_metadata|provider_response|workstation_path|\/private\/scan/,
+    );
+  });
 });
 
 describe("provenance closure", () => {

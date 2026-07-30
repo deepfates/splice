@@ -263,6 +263,13 @@ Projection commands read one or more raw event files without rewriting them:
 
 `markdown` renders the selected main path and nearby alternatives. `training`
 writes attributed SFT and preference JSONL plus a complete accounting report.
+Both use Lync's exact kind/profile presentation contract: current Twitter,
+Bluesky, Glowfic, tweet-embed, OCR, structured-message, and ratified Behold
+payloads share one allowlisted reader. Training accepts only presented content;
+Markdown may also name structural containers. Unknown payloads are not searched
+recursively, while unknown non-text events remain visible as JSON in Markdown.
+Source IDs, ordered parents, suppression, `no-train`, and the export drop report
+remain unchanged.
 Exit codes match the main CLI: 0 success, 1 runtime/verify error, 2 usage
 error. Run `splice lync --help` for the full converter and projection surface.
 
