@@ -17,11 +17,12 @@
  *
  * Fleet author-envelope convention (dee-mb0n): actor = "ocr" (the OCR process
  * is the source identity; override via opts.actor when the tool is known),
- * operator = "deepfates", imported_by = "splice/ocr-text-import@0.1" — the
- * importer is NEVER the actor.
+ * operator = "deepfates", imported_by =
+ * "splice/ocr-text-import-portable@0.1" — the importer is NEVER the actor.
  *
- * Ids are deterministic UUIDv8 from (set locator, page number) so re-imports
- * union as duplicates. The source files carry no timestamps at all, so every
+ * Ids are deterministic UUIDv8 from the explicit portable identity scheme,
+ * set locator, and page/document identity so re-imports union as duplicates.
+ * The source files carry no timestamps at all, so every
  * event's `at` is a single explicit fallback (opts.markedAt when given, else
  * the epoch) recorded once in stats.atFallback — deterministic, never silent,
  * and never machine-dependent (no mtimes).
@@ -101,6 +102,8 @@ export interface OcrLyncStats {
   gaps: number[];
   missingDescriptions: number[];
   emptyFiles: string[];
+  /** Versioned deterministic-id recipe used by every emitted event. */
+  identityScheme: typeof OCR_IDENTITY_SCHEME;
   /** The single explicit timestamp fallback: source files carry no timestamps. */
   atFallback: { used: string; reason: string };
 }
@@ -113,31 +116,68 @@ export interface OcrLyncResult {
 
 export interface OcrLyncOptions extends Partial<LyncProducerOptions> {
   /**
-   * Stable identity of the page set, used in every deterministic id. Defaults
-   * to the directory basename (e.g. "signal-ocr") so ids do not depend on
-   * where the checkout lives on disk.
+   * Stable identity of the page set, combined with OCR_IDENTITY_SCHEME in
+   * every deterministic id. Defaults to the directory basename (e.g.
+   * "signal-ocr") so ids do not depend on where the checkout lives on disk.
    */
   setLocator?: string;
 }
 
 /* ------------------------------ Deterministic ids ------------------------- */
 
-export function ocrSetEventId(setLocator: string): string {
+/**
+ * Versioned after the legacy set payload leaked scan.dir. Changing that body
+ * under legacy ids would turn a privacy repair into same-id conflicts.
+ */
+export const OCR_IDENTITY_SCHEME = "splice/ocr-portable-v2" as const;
+
+/** Legacy helpers exist only for migration tests and old-archive diagnosis. */
+export function legacyOcrSetEventId(setLocator: string): string {
   return deterministicLyncId("ocr", "set", setLocator);
 }
 
-export function ocrPageEventId(
+export function legacyOcrPageEventId(
   setLocator: string,
   pageNumber: number,
 ): string {
   return deterministicLyncId("ocr", "page", setLocator, String(pageNumber));
 }
 
-export function ocrDocumentEventId(
+export function legacyOcrDocumentEventId(
   setLocator: string,
   fileName: string,
 ): string {
   return deterministicLyncId("ocr", "document", setLocator, fileName);
+}
+
+export function ocrSetEventId(setLocator: string): string {
+  return deterministicLyncId("ocr", OCR_IDENTITY_SCHEME, "set", setLocator);
+}
+
+export function ocrPageEventId(
+  setLocator: string,
+  pageNumber: number,
+): string {
+  return deterministicLyncId(
+    "ocr",
+    OCR_IDENTITY_SCHEME,
+    "page",
+    setLocator,
+    String(pageNumber),
+  );
+}
+
+export function ocrDocumentEventId(
+  setLocator: string,
+  fileName: string,
+): string {
+  return deterministicLyncId(
+    "ocr",
+    OCR_IDENTITY_SCHEME,
+    "document",
+    setLocator,
+    fileName,
+  );
 }
 
 /* --------------------------------- Scan ----------------------------------- */
@@ -297,7 +337,7 @@ export function ocrPageSetToLyncEvents(
 ): OcrLyncResult {
   const setLocator = opts?.setLocator ?? path.basename(scan.dir);
   const producer: LyncProducerOptions = {
-    importer: opts?.importer ?? "ocr-text-import",
+    importer: opts?.importer ?? "ocr-text-import-portable",
     sourceRef: opts?.sourceRef ?? scan.dir,
     via: opts?.via ?? `${setLocator}@unknown`,
     operator: opts?.operator,
@@ -330,7 +370,7 @@ export function ocrPageSetToLyncEvents(
     parents: [],
     payload: {
       locator: setLocator,
-      dir: scan.dir,
+      identity_scheme: OCR_IDENTITY_SCHEME,
       source_files: scan.sourceFiles,
       pages: scan.pages.length,
       page_range:
@@ -429,6 +469,7 @@ export function ocrPageSetToLyncEvents(
       gaps: scan.gaps,
       missingDescriptions: scan.missingDescriptions,
       emptyFiles: scan.emptyFiles,
+      identityScheme: OCR_IDENTITY_SCHEME,
       atFallback,
     },
   };

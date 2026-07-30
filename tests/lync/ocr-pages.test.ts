@@ -4,6 +4,7 @@ import * as fssync from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseLyncFiles } from "@deepfates/lync/events";
 
 import {
   scanOcrPageDir,
@@ -12,8 +13,13 @@ import {
   ocrSetEventId,
   ocrPageEventId,
   ocrDocumentEventId,
+  legacyOcrSetEventId,
+  legacyOcrPageEventId,
+  legacyOcrDocumentEventId,
+  OCR_IDENTITY_SCHEME,
 } from "../../src/outputs/lync-ocr.js";
 import { verifyLyncFile } from "../../src/outputs/lync.js";
+import { renderLyncMarkdown } from "../../src/outputs/lync-markdown.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "../..");
@@ -149,7 +155,9 @@ describe.skipIf(!hasRealDir)(
       for (const ev of events) {
         expect(ev.author.actor).toBe("ocr");
         expect(ev.author.operator).toBe("deepfates");
-        expect(ev.author.imported_by).toBe("splice/ocr-text-import@0.1");
+        expect(ev.author.imported_by).toBe(
+          "splice/ocr-text-import-portable@0.1",
+        );
         expect(ev.author.actor).not.toBe(ev.author.imported_by);
       }
       expect(pages[40].author.source).toBe(`${realDir}:page-041.txt`);
@@ -236,6 +244,7 @@ describe("gaps, malformed and empty files surface in stats — nothing vanishes"
       expect(result.stats.emptyFiles).toEqual(["page-005.txt"]);
       expect(result.stats.skipped).toHaveLength(2);
       expect(result.stats.missingDescriptions).toEqual([2, 5]);
+      expect(result.stats.identityScheme).toBe(OCR_IDENTITY_SCHEME);
       // timestamp provenance is explicit: no source timestamps exist
       expect(result.stats.atFallback.reason).toMatch(/no timestamps/);
 
@@ -300,6 +309,95 @@ describe("gaps, malformed and empty files surface in stats — nothing vanishes"
     } finally {
       await fs.rm(dirA, { recursive: true, force: true });
       await fs.rm(dirB, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("portable OCR identity migration", () => {
+  it("keeps an explicit portable source ref free of the physical directory through Markdown", async () => {
+    const dir = await makeSyntheticDir();
+    try {
+      const mapped = ocrPageSetToLyncEvents(await scanOcrPageDir(dir), {
+        setLocator: "portable-fixture",
+        sourceRef: "fixture://signal-ocr",
+      });
+      const source = `${mapped.events.map(JSON.stringify).join("\n")}\n`;
+
+      expect(source).not.toContain(dir);
+      expect(mapped.events[0].payload).not.toHaveProperty("dir");
+      expect(mapped.events[0].payload.identity_scheme).toBe(OCR_IDENTITY_SCHEME);
+      expect(mapped.events.every((event) =>
+        event.author.source?.startsWith("fixture://signal-ocr:")
+      )).toBe(true);
+
+      const parsed = parseLyncFiles([{
+        file: "portable-ocr.lync",
+        bytes: new TextEncoder().encode(source),
+      }]);
+      const markdown = renderLyncMarkdown(parsed, { title: "portable OCR" }).markdown;
+      expect(markdown).not.toContain(dir);
+      expect(markdown).toContain("OCR set: portable-fixture");
+      expect(markdown).toContain("page one text");
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses disjoint ids for legacy path-bearing and portable graphs without conflicts", async () => {
+    const dir = await makeSyntheticDir();
+    try {
+      const portable = ocrPageSetToLyncEvents(await scanOcrPageDir(dir), {
+        setLocator: "migration-fixture",
+        sourceRef: "fixture://signal-ocr",
+      }).events;
+      const legacyIdByPortableId = new Map<string, string>();
+      for (const event of portable) {
+        const legacyId = event.kind === "ocr/set"
+          ? legacyOcrSetEventId("migration-fixture")
+          : event.kind === "ocr/page"
+            ? legacyOcrPageEventId(
+                "migration-fixture",
+                event.payload.page as number,
+              )
+            : legacyOcrDocumentEventId(
+                "migration-fixture",
+                event.payload.file as string,
+              );
+        legacyIdByPortableId.set(event.id, legacyId);
+      }
+      const legacy = portable.map((event) => {
+        const payload = { ...event.payload };
+        delete payload.identity_scheme;
+        if (event.kind === "ocr/set") payload.dir = dir;
+        return {
+          ...event,
+          id: legacyIdByPortableId.get(event.id)!,
+          parents: event.parents.map((id) => legacyIdByPortableId.get(id) ?? id),
+          author: {
+            ...event.author,
+            imported_by: "splice/ocr-text-import@0.1",
+          },
+          payload,
+        };
+      });
+      const portableIds = new Set(portable.map((event) => event.id));
+      expect(legacy.every((event) => !portableIds.has(event.id))).toBe(true);
+
+      const parsed = parseLyncFiles([
+        {
+          file: "legacy.lync",
+          bytes: new TextEncoder().encode(`${legacy.map(JSON.stringify).join("\n")}\n`),
+        },
+        {
+          file: "portable.lync",
+          bytes: new TextEncoder().encode(`${portable.map(JSON.stringify).join("\n")}\n`),
+        },
+      ]);
+      expect(parsed.conflictIds).toEqual([]);
+      expect(parsed.conflictVariants).toEqual([]);
+      expect(parsed.unionEventIds).toHaveLength(legacy.length + portable.length);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
     }
   });
 });

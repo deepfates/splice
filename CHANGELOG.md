@@ -11,6 +11,10 @@ Dates are in YYYY-MM-DD.
   `@deepfates/lync/presentation` instead of maintaining their own shallow text
   heuristics. Known source/profile contracts are allowlisted, source identity
   is unchanged, and incidental raw fields do not enter readable or model text.
+- OCR Lync output now uses the versioned `splice/ocr-portable-v2` identity
+  scheme and no longer stores the scanned directory in `ocr/set`. This avoids
+  same-id conflicts with legacy path-bearing events; explicit portable source
+  refs stay path-free through raw events and Markdown.
 - Added the filesystem-free `@deepfates/splice/browser` Twitter archive
   adapter. Local applications can turn decoded ZIP/directory members into one
   deterministic conversation loom without uploading content or evaluating the

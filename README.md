@@ -237,7 +237,9 @@ Commands:
 - `ocr` — a directory of OCR pages (`page-NNN.txt`, optional
   `page-NNN.desc.txt` sidecars, combined `*.md`) → `ocr/set`, `ocr/page`,
   `ocr/document` events. `--set-locator <name>` pins the id-stable set
-  identity (default: directory basename).
+  identity (default: directory basename). For a portable archive, also pass a
+  non-filesystem `--source-ref` such as `archive://signal-ocr`; no physical
+  source directory is then carried in the emitted events.
 - `tweet-embed` — a directory of cached oEmbed responses
   (`<tweetid>-light.json`) → `twitter/tweet-embed` events. Pass
   `--archive-ids-file <path>` (JSON array or one id per line) to parent
@@ -253,8 +255,28 @@ Examples:
 
     npx tsx splice.ts lync archive --source ~/Downloads/my-twitter-archive --out ./out/twitter.lync
     npx tsx splice.ts lync glowfic --source tests/fixtures/glowfic-export/thread.json --out ./out/thread-5506.lync
-    npx tsx splice.ts lync ocr --source ../deep-space/data/signal-ocr --out ./out/signal-ocr.lync
+    npx tsx splice.ts lync ocr --source ../deep-space/data/signal-ocr --source-ref archive://signal-ocr --set-locator signal-ocr --out ./out/signal-ocr.lync
     npx tsx splice.ts lync tweet-embed --source ../deep-space/.embed-cache/tweets --out ./out/embeds.lync
+
+### OCR portable identity and legacy cutover
+
+Current OCR events use identity scheme `splice/ocr-portable-v2`. The scheme is
+part of every set/page/document UUID recipe, is declared as
+`payload.identity_scheme` on the `ocr/set`, and is reported in conversion
+stats. The set payload does not carry the scanned directory. With an explicit
+portable `--source-ref`, neither the `.lync` output nor raw-Lync Markdown
+contains the physical checkout path; the path is used only to read local input.
+
+OCR files produced before this cutover used unversioned ids derived from
+`("ocr", "set|page|document", setLocator, ...)`, identified the default
+importer as `splice/ocr-text-import@0.1`, and included `ocr/set.payload.dir`.
+Changing that body under the old ids would create same-id conflicts, so v2
+mints a disjoint graph and identifies the default importer as
+`splice/ocr-text-import-portable@0.1`. Regenerate and replace a legacy OCR
+archive when possible. If legacy and v2 files are unioned, Lync can retain both
+without conflicts, but they are two representations of the same source—not two
+independent observations. Keep `--set-locator` and `--source-ref` stable across
+reruns; identical inputs and options remain byte-identical.
 
 Projection commands read one or more raw event files without rewriting them:
 

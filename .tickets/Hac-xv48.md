@@ -1,9 +1,10 @@
 ---
 id: Hac-xv48
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-07-25T17:41:52Z
+closed: 2026-07-30T09:36:42Z
 type: bug
 priority: 1
 assignee: deepfates
@@ -17,3 +18,23 @@ A real heterogeneous local rehearsal ran 'splice lync ocr --source /absolute/pat
 
 An OCR import with an explicit portable source reference contains no absolute source/check-out path in any event or downstream Markdown; unchanged inputs still rerun byte-identically; the identity/migration contract for pre-fix OCR output is explicit and tested so old and new files cannot be silently unioned into conflicts; the full OCR importer and corpus loop gates pass.
 
+## Resolution
+
+The versioned `splice/ocr-portable-v2` recipe remints the complete
+set/page/document chain, removes `ocr/set.payload.dir`, and declares the scheme
+in the set payload and conversion stats. Legacy-id helpers and a generated
+legacy/v2 union regression prove the two graphs are disjoint with zero conflict
+variants; documentation warns that coexistence is duplicate representation,
+not two observations.
+
+Exercised on 2026-07-30:
+
+- 192/192 Splice tests and TypeScript build passed, including the real local
+  201-file/100-page OCR archive and deterministic double-run checks.
+- The ordinary CLI emitted 102 verifier-accepted events from that archive with
+  `--source-ref archive://signal-ocr`; both the 592,763-byte `.lync` and
+  471,831-byte Markdown had zero occurrences of the physical source path.
+- Textile's provider-free cross-repository corpus loop passed through Splice
+  ingest/export, Lync verify/merge, Curare clustering, Textile keep/note, and
+  deterministic Markdown/training export. Temporary local artifacts were
+  removed; no corpus data was uploaded or published.
