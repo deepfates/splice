@@ -86,11 +86,15 @@ to an Obsidian vault:
 includes authored tweets, community tweets, published Articles, and nonempty
 Note Tweets. It excludes retweets, likes, DMs, Grok chats, drafts, and account
 metadata; recent deleted tweets require `--include-deleted`. Each record gets a
-stable, ID-bearing path, YAML properties, exact reply identity, ordinary
-relative Markdown media links, and an original-X link when available. Hashtags
-and mentions remain readable. The output includes `README.md` and a machine-
-readable `export-report.json` whose counts reconcile the included and skipped
-records.
+stable entry in `export-index.jsonl`, while the visible Markdown follows the
+original Splice archive idiom: chronological daily notes for standalone tweets,
+compact files for connected self-reply threads, minimal `Date` frontmatter,
+inline media, and original-X links. Replies to other accounts are retained in
+`replies_by_date/` so they do not swamp the standalone-tweet journal. Published
+Articles, community tweets, and Note Tweets receive their own readable
+projections. Hashtags and mentions remain readable. The output includes
+`README.md` and a machine-readable `export-report.json` whose counts reconcile
+the included and skipped records.
 
 The output directory must be new. Splice builds a sibling partial directory and
 renames it into place only after the complete note and media export succeeds.

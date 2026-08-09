@@ -47,7 +47,7 @@ describe("splice twitter-markdown", () => {
     );
     await fs.writeFile(
       path.join(data, "account.js"),
-      wrapped("account", [{ account: { username: "archive_author" } }]),
+      wrapped("account", [{ account: { username: "archive_author", accountId: "owner-1" } }]),
     );
     await fs.writeFile(
       path.join(data, "tweets.js"),
@@ -55,9 +55,12 @@ describe("splice twitter-markdown", () => {
         {
           tweet: {
             id_str: "1001",
-            full_text: "#Same opening words @friend https://t.co/a",
+            full_text: "#Same opening words @friend https://t.co/a https://t.co/media",
             created_at: "Wed Jan 01 12:00:00 +0000 2025",
-            entities: { urls: [{ url: "https://t.co/a", expanded_url: "https://example.com/a" }] },
+            entities: {
+              urls: [{ url: "https://t.co/a", expanded_url: "https://example.com/a" }],
+              media: [{ url: "https://t.co/media" }],
+            },
           },
         },
         {
@@ -66,6 +69,7 @@ describe("splice twitter-markdown", () => {
             full_text: "#Same opening words @friend with a reply",
             created_at: "Wed Jan 01 12:01:00 +0000 2025",
             in_reply_to_status_id_str: "1001",
+            in_reply_to_user_id_str: "owner-1",
           },
         },
         {
@@ -73,6 +77,61 @@ describe("splice twitter-markdown", () => {
             id_str: "1003",
             full_text: "RT @someone: not authored writing",
             created_at: "Wed Jan 01 12:02:00 +0000 2025",
+          },
+        },
+        {
+          tweet: {
+            id_str: "1004",
+            full_text: "First standalone post",
+            created_at: "Wed Jan 01 13:00:00 +0000 2025",
+          },
+        },
+        {
+          tweet: {
+            id_str: "1005",
+            full_text: "Second standalone post",
+            created_at: "Wed Jan 01 14:00:00 +0000 2025",
+          },
+        },
+        {
+          tweet: {
+            id_str: "1006",
+            full_text: "A reply to somebody else",
+            created_at: "Wed Jan 01 15:00:00 +0000 2025",
+            in_reply_to_status_id_str: "9999",
+            in_reply_to_user_id_str: "other-1",
+          },
+        },
+        {
+          tweet: {
+            id_str: "1010",
+            full_text: "All I want to do",
+            created_at: "Wed Jan 01 16:00:00 +0000 2025",
+          },
+        },
+        {
+          tweet: {
+            id_str: "1011",
+            full_text: "First case-collision thread reply",
+            created_at: "Wed Jan 01 16:01:00 +0000 2025",
+            in_reply_to_status_id_str: "1010",
+            in_reply_to_user_id_str: "owner-1",
+          },
+        },
+        {
+          tweet: {
+            id_str: "1020",
+            full_text: "all i want to do",
+            created_at: "Wed Jan 01 17:00:00 +0000 2025",
+          },
+        },
+        {
+          tweet: {
+            id_str: "1021",
+            full_text: "Second case-collision thread reply",
+            created_at: "Wed Jan 01 17:01:00 +0000 2025",
+            in_reply_to_status_id_str: "1020",
+            in_reply_to_user_id_str: "owner-1",
           },
         },
       ]),
@@ -140,39 +199,49 @@ describe("splice twitter-markdown", () => {
       { cwd: projectRoot },
     );
     const report = JSON.parse(result.stdout);
-    expect(report.records).toBe(5);
-    expect(report.notesWritten).toBe(5);
+    expect(report.records).toBe(12);
+    expect(report.filesWritten).toBe(8);
+    expect(report.dailyFiles).toBe(1);
+    expect(report.replyFiles).toBe(1);
+    expect(report.threadFiles).toBe(3);
+    expect(report.articleFiles).toBe(1);
+    expect(report.noteFiles).toBe(1);
+    expect(report.communityFiles).toBe(1);
     expect(report.mediaCopied).toBe(1);
     expect(report.stats.skipped.retweets).toBe(1);
     expect(report.stats.skipped.articleDrafts).toBe(1);
     expect(report.stats.skipped.deletedTweets).toBe(1);
-    expect(report.stats.totals).toEqual({ source: 8, emitted: 5, skipped: 3, reconciled: true });
+    expect(report.stats.totals).toEqual({ source: 15, emitted: 12, skipped: 3, reconciled: true });
 
-    const tweetDir = path.join(out, "tweets", "2025", "01");
-    const tweetFiles = (await fs.readdir(tweetDir)).filter((name) => name.endsWith(".md"));
-    expect(tweetFiles).toHaveLength(2);
-    expect(tweetFiles.some((name) => name.includes("1001"))).toBe(true);
-    expect(tweetFiles.some((name) => name.includes("1002"))).toBe(true);
+    const daily = await fs.readFile(path.join(out, "tweets_by_date", "2025-01-01.md"), "utf8");
+    expect(daily).toContain("*[05:00 AM](https://x.com/archive_author/status/1004)*  \nFirst standalone post");
+    expect(daily).toContain("\n\n---\n\n");
+    expect(daily).toContain("*[06:00 AM](https://x.com/archive_author/status/1005)*  \nSecond standalone post");
+    expect(daily).not.toContain("twitter_id:");
+    expect(daily).not.toContain("A reply to somebody else");
 
-    const first = await fs.readFile(
-      path.join(tweetDir, tweetFiles.find((name) => name.includes("1001")) as string),
-      "utf8",
-    );
-    expect(first).toContain('type: "twitter/tweet"');
-    expect(first).toContain("\\#Same opening words @friend https://example.com/a");
-    expect(first).toContain("../../../attachments/twitter/tweets_media/1001-image.jpg");
+    const replies = await fs.readFile(path.join(out, "replies_by_date", "2025-01-01.md"), "utf8");
+    expect(replies).toContain("A reply to somebody else");
 
-    const reply = await fs.readFile(
-      path.join(tweetDir, tweetFiles.find((name) => name.includes("1002")) as string),
-      "utf8",
-    );
-    expect(reply).toContain('in_reply_to: "1001"');
-    expect(reply).toMatch(/\[Replying to archived tweet 1001\]\([^)]*1001\.md\)/);
+    const threadFiles = await fs.readdir(path.join(out, "threads"));
+    expect(threadFiles).toHaveLength(3);
+    expect(new Set(threadFiles.map((name) => name.toLocaleLowerCase("en-US"))).size).toBe(3);
+    expect(threadFiles).toContain("All_I_want_to_do--1010.md");
+    expect(threadFiles).toContain("all_i_want_to_do--1020.md");
+    const primaryThread = threadFiles.find((name) => name.includes("Same_opening_words")) as string;
+    const thread = await fs.readFile(path.join(out, "threads", primaryThread), "utf8");
+    expect(thread).toContain("Date: 2025-01-01");
+    expect(thread).toContain("#Same opening words @friend https://example.com/a");
+    expect(thread).not.toContain("https://t.co/media");
+    expect(thread).toContain("#Same opening words @friend with a reply");
+    expect(thread).toContain("../images/_1001-image.jpg");
+    expect(thread).toContain("[View on Twitter](https://x.com/archive_author/status/1001)");
+    expect(thread).not.toContain("twitter_id:");
 
-    const articleFiles = await fs.readdir(path.join(out, "articles", "2025", "01"));
+    const articleFiles = await fs.readdir(path.join(out, "articles"));
     expect(articleFiles).toHaveLength(1);
     const article = await fs.readFile(
-      path.join(out, "articles", "2025", "01", articleFiles[0]),
+      path.join(out, "articles", articleFiles[0]),
       "utf8",
     );
     expect(article).toContain("# Published article");
@@ -180,6 +249,14 @@ describe("splice twitter-markdown", () => {
     expect(article).not.toContain("Do not export");
 
     expect(await fs.readFile(path.join(out, "README.md"), "utf8")).not.toContain("private");
+    const index = (await fs.readFile(path.join(out, "export-index.jsonl"), "utf8"))
+      .trim().split("\n").map((line) => JSON.parse(line));
+    expect(index).toHaveLength(12);
+    expect(index.find((entry) => entry.id === "1001")?.file).toBe(
+      index.find((entry) => entry.id === "1002")?.file,
+    );
+    expect(index.find((entry) => entry.id === "1004")?.file).toBe("tweets_by_date/2025-01-01.md");
+    expect(index.find((entry) => entry.id === "1006")?.file).toBe("replies_by_date/2025-01-01.md");
     expect(JSON.parse(await fs.readFile(path.join(out, "export-report.json"), "utf8"))).toEqual(report);
   });
 });

@@ -28,9 +28,16 @@ export interface TwitterPublicWritingRecord {
   title?: string;
   createdAt: string | null;
   parentId: string | null;
+  replyToAccountId: string | null;
+  replyToOwnAccount: boolean | null;
   sourceUrl: string | null;
   communityId?: string;
   media: TwitterPublicWritingMedia[];
+}
+
+interface AccountIdentity {
+  handle: string;
+  accountId: string | null;
 }
 
 export interface TwitterPublicWritingStats {
@@ -118,17 +125,20 @@ function manifestFiles(manifest: Manifest, type: string): string[] {
   );
 }
 
-async function accountHandle(root: string): Promise<string> {
+async function accountIdentity(root: string): Promise<AccountIdentity> {
   try {
     const values = await readArchiveArray(path.join(root, "data", "account.js"));
     const first = values[0];
     if (isObject(first) && isObject(first.account)) {
-      return asString(first.account.username) ?? "unknown";
+      return {
+        handle: asString(first.account.username) ?? "unknown",
+        accountId: asString(first.account.accountId) ?? asString(first.account.id),
+      };
     }
   } catch {
     // The archive remains usable without account.js; URLs use the i/web form.
   }
-  return "unknown";
+  return { handle: "unknown", accountId: null };
 }
 
 async function mediaMap(root: string, directory: string): Promise<Map<string, string[]>> {
@@ -169,7 +179,15 @@ function expandedText(raw: Record<string, unknown>, fallback: string): string {
     if (!isObject(value)) continue;
     const short = asString(value.url);
     const expanded = asString(value.expanded_url) ?? asString(value.expandedUrl);
-    if (short && expanded) text = text.split(short).join(expanded);
+    if (short && expanded) {
+      text = text.split(short).join(expanded === short && /^https:\/\/t\.co\//.test(short) ? "" : expanded);
+    }
+  }
+  const media = entities && Array.isArray(entities.media) ? entities.media : [];
+  for (const value of media) {
+    if (!isObject(value)) continue;
+    const short = asString(value.url);
+    if (short) text = text.split(short).join("");
   }
   return text.trim();
 }
@@ -177,7 +195,7 @@ function expandedText(raw: Record<string, unknown>, fallback: string): string {
 function tweetRecord(
   wrapper: unknown,
   kind: "tweet" | "community-tweet" | "deleted-tweet",
-  handle: string,
+  identity: AccountIdentity,
   media: Map<string, string[]>,
 ): TwitterPublicWritingRecord | "retweet" | "malformed" | "empty" {
   const raw = isObject(wrapper) && isObject(wrapper.tweet) ? wrapper.tweet : wrapper;
@@ -196,9 +214,13 @@ function tweetRecord(
   }
   const sourceUrl = kind === "deleted-tweet"
     ? null
-    : handle === "unknown"
+    : identity.handle === "unknown"
       ? `https://x.com/i/web/status/${id}`
-      : `https://x.com/${handle}/status/${id}`;
+      : `https://x.com/${identity.handle}/status/${id}`;
+  const replyToAccountId =
+    asString(raw.in_reply_to_user_id_str) ??
+    asString(raw.in_reply_to_user_id) ??
+    asString(raw.inReplyToUserId);
   return {
     id,
     kind,
@@ -208,6 +230,11 @@ function tweetRecord(
       asString(raw.in_reply_to_status_id_str) ??
       asString(raw.in_reply_to_status_id) ??
       asString(raw.inReplyTo),
+    replyToAccountId,
+    replyToOwnAccount:
+      replyToAccountId && identity.accountId
+        ? replyToAccountId === identity.accountId
+        : null,
     sourceUrl,
     communityId:
       kind === "community-tweet"
@@ -219,7 +246,7 @@ function tweetRecord(
 
 function noteRecord(
   wrapper: unknown,
-  handle: string,
+  identity: AccountIdentity,
 ): TwitterPublicWritingRecord | "malformed" | "empty" {
   const raw = isObject(wrapper) && isObject(wrapper.noteTweet)
     ? wrapper.noteTweet
@@ -239,10 +266,12 @@ function noteRecord(
     text: text.replace(/\r\n?/g, "\n").trim(),
     createdAt: asIso(raw.createdAt),
     parentId: null,
+    replyToAccountId: null,
+    replyToOwnAccount: null,
     sourceUrl: tweetId
-      ? handle === "unknown"
+      ? identity.handle === "unknown"
         ? `https://x.com/i/web/status/${tweetId}`
-        : `https://x.com/${handle}/status/${tweetId}`
+        : `https://x.com/${identity.handle}/status/${tweetId}`
       : null,
     media: [],
   };
@@ -261,7 +290,7 @@ function articleBody(raw: Record<string, unknown>): string {
 function articleRecord(
   wrapper: unknown,
   metadataWrapper: unknown,
-  handle: string,
+  identity: AccountIdentity,
 ): TwitterPublicWritingRecord | "draft" | "malformed" | "empty" {
   const raw = isObject(wrapper) && isObject(wrapper.article) ? wrapper.article : wrapper;
   const metadata = isObject(metadataWrapper) && isObject(metadataWrapper.articleMetadata)
@@ -289,10 +318,12 @@ function articleRecord(
       asIso(metadata.createdAtMs) ??
       asIso(metadata.modifiedAtMs),
     parentId: null,
+    replyToAccountId: null,
+    replyToOwnAccount: null,
     sourceUrl: tweetId
-      ? handle === "unknown"
+      ? identity.handle === "unknown"
         ? `https://x.com/i/web/status/${tweetId}`
-        : `https://x.com/${handle}/status/${tweetId}`
+        : `https://x.com/${identity.handle}/status/${tweetId}`
       : null,
     media: cover ? [{ url: cover, alt: title ?? `article ${id}`, type: "photo" }] : [],
   };
@@ -331,7 +362,7 @@ export async function ingestTwitterPublicWriting(
   }
   const parsedManifest = manifestValue as Manifest;
 
-  const handle = await accountHandle(root);
+  const identity = await accountIdentity(root);
   const tweetMedia = await mediaMap(root, "tweets_media");
   const communityMedia = await mediaMap(root, "community_tweet_media");
   const deletedMedia = options.includeDeleted
@@ -376,29 +407,29 @@ export async function ingestTwitterPublicWriting(
 
   for (const value of await readType("tweets")) {
     sourceRecords.tweet += 1;
-    add(tweetRecord(value, "tweet", handle, tweetMedia));
+    add(tweetRecord(value, "tweet", identity, tweetMedia));
   }
   for (const value of await readType("communityTweet")) {
     sourceRecords["community-tweet"] += 1;
-    add(tweetRecord(value, "community-tweet", handle, communityMedia));
+    add(tweetRecord(value, "community-tweet", identity, communityMedia));
   }
   for (const value of await readType("noteTweet")) {
     sourceRecords["note-tweet"] += 1;
-    add(noteRecord(value, handle));
+    add(noteRecord(value, identity));
   }
 
   const articles = await readType("article");
   const metadata = await readType("articleMetadata");
   sourceRecords.article = articles.length;
   for (let index = 0; index < articles.length; index += 1) {
-    add(articleRecord(articles[index], metadata[index], handle));
+    add(articleRecord(articles[index], metadata[index], identity));
   }
 
   const deletedTweets = await readType("deletedTweets");
   sourceRecords["deleted-tweet"] = deletedTweets.length;
   if (options.includeDeleted) {
     for (const value of deletedTweets) {
-      add(tweetRecord(value, "deleted-tweet", handle, deletedMedia));
+      add(tweetRecord(value, "deleted-tweet", identity, deletedMedia));
     }
   } else {
     skipped.deletedTweets = deletedTweets.length;
@@ -430,9 +461,9 @@ export async function ingestTwitterPublicWriting(
       `twitter public writing: counts do not reconcile (${totals.source} source != ${totals.emitted} emitted + ${totals.skipped} skipped)`,
     );
   }
-  logger("info", `Prepared ${records.length} public writing record(s) for @${handle}`);
+  logger("info", `Prepared ${records.length} public writing record(s) for @${identity.handle}`);
   return {
     records,
-    stats: { accountHandle: handle, sourceRecords, emitted, skipped, totals },
+    stats: { accountHandle: identity.handle, sourceRecords, emitted, skipped, totals },
   };
 }

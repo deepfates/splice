@@ -10,106 +10,326 @@ import type {
 export interface TwitterPublicMarkdownOptions {
   copyMedia?: boolean;
   dryRun?: boolean;
+  timeZone?: string;
 }
 
 export interface TwitterPublicMarkdownReport {
   records: number;
-  notesWritten: number;
+  filesWritten: number;
+  dailyFiles: number;
+  replyFiles: number;
+  threadFiles: number;
+  articleFiles: number;
+  noteFiles: number;
+  communityFiles: number;
+  deletedFiles: number;
   mediaReferenced: number;
   mediaCopied: number;
   mediaMissing: number;
+  timeZone: string;
   outputDirectory: string;
   stats: TwitterPublicWritingResult["stats"];
 }
 
-function yamlString(value: string): string {
-  return JSON.stringify(value);
+interface Document {
+  relativePath: string;
+  records: TwitterPublicWritingRecord[];
+  markdown: string;
 }
 
+interface MediaPlan {
+  sources: string[];
+  targets: Map<string, string>;
+}
+
+// Historical Splice exports rendered Pacific timestamps with a fixed UTC-8 offset.
+const DEFAULT_TIME_ZONE = "Etc/GMT+8";
+
 function prose(text: string): string {
-  return text
-    .replace(/\r\n?/g, "\n")
-    .split("\n")
-    .map((line) => {
-      if (/^ {0,3}#/.test(line)) return line.replace("#", "\\#");
-      if (/^ {0,3}(`{3,}|~{3,})/.test(line)) return `\\${line}`;
-      return line;
-    })
-    .join("\n")
-    .trim();
+  return text.replace(/\r\n?/g, "\n").trim();
+}
+
+function firstWords(record: TwitterPublicWritingRecord): string {
+  return record.title || record.text.split(/\s+/).slice(0, 5).join(" ");
 }
 
 function slug(record: TwitterPublicWritingRecord): string {
-  const seed = record.title || record.text.split(/\s+/).slice(0, 8).join(" ");
-  return sanitizeFilename(seed.toLowerCase().replace(/_/g, "-"), 64).replace(/_/g, "-");
+  const value = sanitizeFilename(firstWords(record), 64);
+  return value === "untitled" ? `tweet_${record.id}` : value;
 }
 
-function recordPath(record: TwitterPublicWritingRecord): string {
-  const day = record.createdAt?.slice(0, 10) ?? "unknown-date";
-  const year = record.createdAt?.slice(0, 4) ?? "unknown";
-  const month = record.createdAt?.slice(5, 7) ?? "unknown";
-  const directory = record.kind === "tweet"
-    ? "tweets"
-    : record.kind === "community-tweet"
-      ? "community-tweets"
-      : record.kind === "note-tweet"
-        ? "notes"
-        : record.kind === "article"
-          ? "articles"
-          : "deleted-tweets";
-  return path.join(directory, year, month, `${day}--${slug(record)}--${record.id}.md`);
+function dateOnly(record: TwitterPublicWritingRecord, timeZone: string): string {
+  if (!record.createdAt) return "unknown-date";
+  const date = new Date(record.createdAt);
+  if (Number.isNaN(date.getTime())) return "unknown-date";
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${value.year}-${value.month}-${value.day}`;
 }
 
-function relativeMarkdownLink(from: string, to: string): string {
-  const relative = path.relative(path.dirname(from), to).split(path.sep).join("/");
-  return encodeURI(relative);
+function localTime(record: TwitterPublicWritingRecord, timeZone: string): string {
+  if (!record.createdAt) return "Unknown time";
+  const date = new Date(record.createdAt);
+  if (Number.isNaN(date.getTime())) return "Unknown time";
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  }).format(date);
 }
 
-function renderRecord(
-  record: TwitterPublicWritingRecord,
-  outputPath: string,
-  pathsByTweetId: Map<string, string>,
-  mediaTargets: Map<string, string>,
-): string {
-  const tags = ["twitter", "archive", record.kind];
-  const title = record.title || record.text.split(/\s+/).slice(0, 12).join(" ") || record.id;
-  const properties = [
-    "---",
-    `title: ${yamlString(title)}`,
-    `type: ${yamlString(`twitter/${record.kind}`)}`,
-    `twitter_id: ${yamlString(record.id)}`,
-    ...(record.createdAt ? [`date: ${yamlString(record.createdAt)}`] : []),
-    ...(record.sourceUrl ? [`source_url: ${yamlString(record.sourceUrl)}`] : []),
-    ...(record.parentId ? [`in_reply_to: ${yamlString(record.parentId)}`] : []),
-    ...(record.communityId ? [`community_id: ${yamlString(record.communityId)}`] : []),
-    `tags: ${JSON.stringify(tags)}`,
-    "---",
-  ];
-  const body: string[] = [];
-  if (record.kind === "article" && record.title) body.push(`# ${prose(record.title)}`);
-  if (record.text) body.push(prose(record.text));
-  for (const media of record.media) {
-    if (media.sourcePath) {
-      const target = mediaTargets.get(media.sourcePath);
-      if (target) {
-        body.push(`![${media.alt}](${relativeMarkdownLink(outputPath, target)})`);
-      }
-    } else if (media.url) {
-      body.push(`![${media.alt}](${media.url})`);
+function mediaPlan(records: TwitterPublicWritingRecord[]): MediaPlan {
+  const byTarget = new Map<string, string>();
+  const targets = new Map<string, string>();
+  for (const source of [...new Set(records.flatMap((record) =>
+    record.media.flatMap((media) => media.sourcePath ? [media.sourcePath] : []),
+  ))].sort()) {
+    const target = path.join("images", `_${path.basename(source)}`);
+    const prior = byTarget.get(target);
+    if (prior && prior !== source) {
+      throw new Error(
+        `twitter public markdown: media collision at ${target} (${prior} and ${source})`,
+      );
     }
+    byTarget.set(target, source);
+    targets.set(source, target);
   }
-  const provenance: string[] = [];
-  if (record.parentId) {
-    const parentPath = pathsByTweetId.get(record.parentId);
-    provenance.push(
-      parentPath
-        ? `[Replying to archived tweet ${record.parentId}](${relativeMarkdownLink(outputPath, parentPath)})`
-        : `Replying to tweet ${record.parentId} (not present in this public-writing export)`,
+  return { sources: [...targets.keys()], targets };
+}
+
+function mediaMarkdown(
+  record: TwitterPublicWritingRecord,
+  from: string,
+  targets: Map<string, string>,
+): string[] {
+  return record.media.flatMap((media) => {
+    if (media.sourcePath) {
+      const target = targets.get(media.sourcePath);
+      if (!target) return [];
+      const relative = path.relative(path.dirname(from), target).split(path.sep).join("/");
+      return [`![${media.alt}](${encodeURI(relative)})`];
+    }
+    return media.url ? [`![${media.alt}](${media.url})`] : [];
+  });
+}
+
+function renderEntry(
+  record: TwitterPublicWritingRecord,
+  from: string,
+  timeZone: string,
+  targets: Map<string, string>,
+): string {
+  const time = localTime(record, timeZone);
+  const heading = record.sourceUrl ? `*[${time}](${record.sourceUrl})*  ` : `*${time}*  `;
+  const body = [prose(record.text), ...mediaMarkdown(record, from, targets)]
+    .filter(Boolean)
+    .join("\n\n");
+  return `${heading}\n${body}`.trimEnd();
+}
+
+function groupByDate(
+  records: TwitterPublicWritingRecord[],
+  timeZone: string,
+): Map<string, TwitterPublicWritingRecord[]> {
+  const result = new Map<string, TwitterPublicWritingRecord[]>();
+  for (const record of records) {
+    const day = dateOnly(record, timeZone);
+    const values = result.get(day) ?? [];
+    values.push(record);
+    result.set(day, values);
+  }
+  for (const values of result.values()) {
+    values.sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? "") || a.id.localeCompare(b.id));
+  }
+  return result;
+}
+
+function connectedTweetComponents(records: TwitterPublicWritingRecord[]): TwitterPublicWritingRecord[][] {
+  const byId = new Map(records.map((record) => [record.id, record]));
+  const neighbors = new Map(records.map((record) => [record.id, new Set<string>()]));
+  for (const record of records) {
+    if (!record.replyToOwnAccount || !record.parentId || !byId.has(record.parentId)) continue;
+    neighbors.get(record.id)?.add(record.parentId);
+    neighbors.get(record.parentId)?.add(record.id);
+  }
+  const visited = new Set<string>();
+  const components: TwitterPublicWritingRecord[][] = [];
+  for (const start of [...records].sort((a, b) => a.id.localeCompare(b.id))) {
+    if (visited.has(start.id)) continue;
+    const ids = [start.id];
+    visited.add(start.id);
+    const component: TwitterPublicWritingRecord[] = [];
+    while (ids.length > 0) {
+      const id = ids.pop() as string;
+      component.push(byId.get(id) as TwitterPublicWritingRecord);
+      for (const neighbor of [...(neighbors.get(id) ?? [])].sort().reverse()) {
+        if (visited.has(neighbor)) continue;
+        visited.add(neighbor);
+        ids.push(neighbor);
+      }
+    }
+    component.sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? "") || a.id.localeCompare(b.id));
+    components.push(component);
+  }
+  return components.sort((a, b) =>
+    (a[0]?.createdAt ?? "").localeCompare(b[0]?.createdAt ?? "") ||
+    (a[0]?.id ?? "").localeCompare(b[0]?.id ?? ""),
+  );
+}
+
+function uniqueThreadPaths(threads: TwitterPublicWritingRecord[][]): Map<TwitterPublicWritingRecord[], string> {
+  const bases = threads.map((thread) => slug(thread[0]));
+  const counts = new Map<string, number>();
+  const keys = bases.map((base) => base.normalize("NFC").toLocaleLowerCase("en-US"));
+  for (const key of keys) counts.set(key, (counts.get(key) ?? 0) + 1);
+  return new Map(threads.map((thread, index) => {
+    const base = bases[index];
+    const name = (counts.get(keys[index]) ?? 0) > 1 ? `${base}--${thread[0].id}` : base;
+    return [thread, path.join("threads", `${name}.md`)];
+  }));
+}
+
+function dailyDocuments(
+  records: TwitterPublicWritingRecord[],
+  directory: string,
+  timeZone: string,
+  targets: Map<string, string>,
+): Document[] {
+  return [...groupByDate(records, timeZone)].sort(([a], [b]) => a.localeCompare(b)).map(([day, values]) => {
+    const relativePath = path.join(directory, `${day}.md`);
+    return {
+      relativePath,
+      records: values,
+      markdown: `${values.map((record) => renderEntry(record, relativePath, timeZone, targets)).join("\n\n---\n\n")}\n`,
+    };
+  });
+}
+
+function threadDocuments(
+  threads: TwitterPublicWritingRecord[][],
+  timeZone: string,
+  targets: Map<string, string>,
+): Document[] {
+  const paths = uniqueThreadPaths(threads);
+  return threads.map((thread) => {
+    const relativePath = paths.get(thread) as string;
+    const first = thread[0];
+    const parts = thread.map((record) =>
+      [prose(record.text), ...mediaMarkdown(record, relativePath, targets)]
+        .filter(Boolean)
+        .join("\n\n"),
+    );
+    const footer = first.sourceUrl ? `\n\n[View on Twitter](${first.sourceUrl})` : "";
+    return {
+      relativePath,
+      records: thread,
+      markdown: `---\nDate: ${dateOnly(first, timeZone)}\n---\n\n\n${parts.join("\n\n\n\n")}${footer}\n`,
+    };
+  });
+}
+
+function articleDocuments(
+  records: TwitterPublicWritingRecord[],
+  timeZone: string,
+  targets: Map<string, string>,
+): Document[] {
+  const names = new Map<string, number>();
+  return records.map((record) => {
+    const base = slug(record);
+    const key = base.normalize("NFC").toLocaleLowerCase("en-US");
+    const count = names.get(key) ?? 0;
+    names.set(key, count + 1);
+    const name = count === 0 ? base : `${base}--${record.id}`;
+    const relativePath = path.join("articles", `${name}.md`);
+    const body = [
+      ...(record.title ? [`# ${prose(record.title)}`] : []),
+      ...(record.text ? [prose(record.text)] : []),
+      ...mediaMarkdown(record, relativePath, targets),
+      ...(record.sourceUrl ? [`[View on Twitter](${record.sourceUrl})`] : []),
+    ].join("\n\n");
+    return {
+      relativePath,
+      records: [record],
+      markdown: `---\nDate: ${dateOnly(record, timeZone)}\n---\n\n${body}\n`,
+    };
+  });
+}
+
+function buildDocuments(
+  records: TwitterPublicWritingRecord[],
+  timeZone: string,
+  targets: Map<string, string>,
+): {
+  documents: Document[];
+  dailyFiles: number;
+  replyFiles: number;
+  threadFiles: number;
+  articleFiles: number;
+  noteFiles: number;
+  communityFiles: number;
+  deletedFiles: number;
+} {
+  const tweets = records.filter((record) => record.kind === "tweet");
+  const components = connectedTweetComponents(tweets);
+  const threads = components.filter((component) => component.length > 1);
+  const singletons = components.filter((component) => component.length === 1).flat();
+  const standalone = singletons.filter((record) => !record.parentId);
+  const replies = singletons.filter((record) => record.parentId);
+  const daily = dailyDocuments(standalone, "tweets_by_date", timeZone, targets);
+  const replyDocs = dailyDocuments(replies, "replies_by_date", timeZone, targets);
+  const threadDocs = threadDocuments(threads, timeZone, targets);
+  const articles = articleDocuments(
+    records.filter((record) => record.kind === "article"),
+    timeZone,
+    targets,
+  );
+  const notes = dailyDocuments(
+    records.filter((record) => record.kind === "note-tweet"),
+    "notes_by_date",
+    timeZone,
+    targets,
+  );
+  const community = dailyDocuments(
+    records.filter((record) => record.kind === "community-tweet"),
+    "community_tweets_by_date",
+    timeZone,
+    targets,
+  );
+  const deleted = dailyDocuments(
+    records.filter((record) => record.kind === "deleted-tweet"),
+    "deleted_tweets_by_date",
+    timeZone,
+    targets,
+  );
+  const documents = [...daily, ...replyDocs, ...threadDocs, ...articles, ...notes, ...community, ...deleted];
+  const recordCount = documents.reduce((sum, document) => sum + document.records.length, 0);
+  if (recordCount !== records.length) {
+    throw new Error(
+      `twitter public markdown: document accounting failed (${recordCount} mapped != ${records.length} records)`,
     );
   }
-  if (record.sourceUrl) provenance.push(`[View original on X](${record.sourceUrl})`);
-  if (provenance.length > 0) body.push(provenance.join(" · "));
-  return `${properties.join("\n")}\n\n${body.join("\n\n").trim()}\n`;
+  const pathCount = new Set(documents.map((document) =>
+    document.relativePath.normalize("NFC").toLocaleLowerCase("en-US"),
+  )).size;
+  if (pathCount !== documents.length) {
+    throw new Error("twitter public markdown: duplicate document output path");
+  }
+  return {
+    documents,
+    dailyFiles: daily.length,
+    replyFiles: replyDocs.length,
+    threadFiles: threadDocs.length,
+    articleFiles: articles.length,
+    noteFiles: notes.length,
+    communityFiles: community.length,
+    deletedFiles: deleted.length,
+  };
 }
 
 export async function writeTwitterPublicMarkdown(
@@ -119,69 +339,48 @@ export async function writeTwitterPublicMarkdown(
   options: TwitterPublicMarkdownOptions = {},
 ): Promise<TwitterPublicMarkdownReport> {
   const copyMedia = options.copyMedia !== false;
+  const timeZone = options.timeZone ?? DEFAULT_TIME_ZONE;
+  // Validate the configured zone before doing any work.
+  new Intl.DateTimeFormat("en-US", { timeZone }).format(new Date(0));
   const finalDir = path.resolve(outDir);
   const partialDir = `${finalDir}.partial-${process.pid}`;
-  const paths = new Map<TwitterPublicWritingRecord, string>();
-  const usedPaths = new Set<string>();
-  const pathsByTweetId = new Map<string, string>();
-  for (const record of result.records) {
-    const relative = recordPath(record);
-    if (usedPaths.has(relative)) {
-      throw new Error(`twitter public markdown: output collision at ${relative}`);
-    }
-    usedPaths.add(relative);
-    paths.set(record, relative);
-    if (record.kind === "tweet" || record.kind === "community-tweet") {
-      pathsByTweetId.set(record.id, relative);
-    }
-  }
-
-  const localMedia = result.records.flatMap((record) =>
-    record.media.flatMap((media) => media.sourcePath ? [media.sourcePath] : []),
-  );
-  const uniqueMedia = [...new Set(localMedia)].sort();
-  const mediaTargets = new Map<string, string>();
-  for (const source of uniqueMedia) {
-    mediaTargets.set(
-      source,
-      path.join("attachments", "twitter", path.basename(path.dirname(source)), path.basename(source)),
-    );
-  }
-  const renderedMediaTargets = copyMedia ? mediaTargets : new Map<string, string>();
+  const media = mediaPlan(result.records);
+  const renderedTargets = copyMedia ? media.targets : new Map<string, string>();
+  const built = buildDocuments(result.records, timeZone, renderedTargets);
   const report: TwitterPublicMarkdownReport = {
     records: result.records.length,
-    notesWritten: options.dryRun ? 0 : result.records.length,
-    mediaReferenced: uniqueMedia.length,
+    filesWritten: options.dryRun ? 0 : built.documents.length,
+    dailyFiles: built.dailyFiles,
+    replyFiles: built.replyFiles,
+    threadFiles: built.threadFiles,
+    articleFiles: built.articleFiles,
+    noteFiles: built.noteFiles,
+    communityFiles: built.communityFiles,
+    deletedFiles: built.deletedFiles,
+    mediaReferenced: copyMedia ? media.sources.length : 0,
     mediaCopied: 0,
     mediaMissing: 0,
+    timeZone,
     outputDirectory: finalDir,
     stats: result.stats,
   };
   if (options.dryRun) return report;
 
   try {
-    const finalStat = await fs.stat(finalDir).catch(() => null);
-    if (finalStat) throw new Error(`output already exists: ${finalDir}`);
-    const partialStat = await fs.stat(partialDir).catch(() => null);
-    if (partialStat) throw new Error(`partial output already exists: ${partialDir}`);
+    if (await fs.stat(finalDir).catch(() => null)) throw new Error(`output already exists: ${finalDir}`);
+    if (await fs.stat(partialDir).catch(() => null)) throw new Error(`partial output already exists: ${partialDir}`);
     await fs.mkdir(partialDir, { recursive: true });
 
-    for (let index = 0; index < result.records.length; index += 1) {
-      const record = result.records[index];
-      const relative = paths.get(record) as string;
-      const absolute = path.join(partialDir, relative);
-      const markdown = renderRecord(record, relative, pathsByTweetId, renderedMediaTargets);
+    for (const document of built.documents) {
+      const absolute = path.join(partialDir, document.relativePath);
       await fs.mkdir(path.dirname(absolute), { recursive: true });
-      await fs.writeFile(absolute, markdown, "utf8");
-      if ((index + 1) % 10_000 === 0) {
-        logger("info", `Wrote ${index + 1}/${result.records.length} Markdown note(s)`);
-      }
+      await fs.writeFile(absolute, document.markdown, "utf8");
     }
 
-    if (copyMedia && uniqueMedia.length > 0) {
-      for (let index = 0; index < uniqueMedia.length; index += 1) {
-        const source = uniqueMedia[index];
-        const target = path.join(partialDir, mediaTargets.get(source) as string);
+    if (copyMedia) {
+      for (let index = 0; index < media.sources.length; index += 1) {
+        const source = media.sources[index];
+        const target = path.join(partialDir, media.targets.get(source) as string);
         try {
           await fs.mkdir(path.dirname(target), { recursive: true });
           await fs.copyFile(source, target);
@@ -190,32 +389,54 @@ export async function writeTwitterPublicMarkdown(
           report.mediaMissing += 1;
         }
         if ((index + 1) % 5_000 === 0) {
-          logger("info", `Copied ${index + 1}/${uniqueMedia.length} media file(s)`);
+          logger("info", `Copied ${index + 1}/${media.sources.length} media file(s)`);
         }
       }
     }
 
+    const recordToFile = new Map<string, string>();
+    for (const document of built.documents) {
+      for (const record of document.records) {
+        recordToFile.set(`${record.kind}:${record.id}`, document.relativePath.split(path.sep).join("/"));
+      }
+    }
+    const indexLines = result.records.map((record) => JSON.stringify({
+      id: record.id,
+      kind: record.kind,
+      createdAt: record.createdAt,
+      parentId: record.parentId,
+      replyToAccountId: record.replyToAccountId,
+      replyToOwnAccount: record.replyToOwnAccount,
+      file: recordToFile.get(`${record.kind}:${record.id}`),
+    }));
+    await fs.writeFile(path.join(partialDir, "export-index.jsonl"), `${indexLines.join("\n")}\n`, "utf8");
+
     const readme = [
       `# Twitter archive @${result.stats.accountHandle}`,
       "",
-      "Portable Markdown notes generated by Splice. Open this directory as an Obsidian vault or use it with any Markdown reader.",
+      "Portable Markdown generated by Splice in the original daily-note and thread-oriented archive style.",
+      "Open this directory as an Obsidian vault or use it with any Markdown reader.",
       "",
-      `- Public writing notes: ${result.records.length}`,
-      `- Local media referenced: ${uniqueMedia.length}`,
+      `- Public writing records: ${result.records.length}`,
+      `- Daily tweet files: ${built.dailyFiles}`,
+      `- Daily reply files: ${built.replyFiles}`,
+      `- Thread files: ${built.threadFiles}`,
+      `- Published Article files: ${built.articleFiles}`,
+      `- Community-tweet daily files: ${built.communityFiles}`,
+      `- Note-Tweet daily files: ${built.noteFiles}`,
       `- Local media copied: ${report.mediaCopied}`,
       `- Retweets excluded: ${result.stats.skipped.retweets}`,
       `- Article drafts excluded: ${result.stats.skipped.articleDrafts}`,
       `- Recent deleted tweets excluded: ${result.stats.skipped.deletedTweets}`,
       `- Counts reconciled: ${result.stats.totals.reconciled ? "yes" : "no"}`,
+      `- Display timezone: ${timeZone}`,
       "- Likes, direct messages, Grok chats, and account metadata are outside this export by design.",
+      "",
+      "`export-index.jsonl` maps every included source record to its Markdown file without adding database-like metadata to each note.",
       "",
     ].join("\n");
     await fs.writeFile(path.join(partialDir, "README.md"), readme, "utf8");
-    await fs.writeFile(
-      path.join(partialDir, "export-report.json"),
-      `${JSON.stringify(report, null, 2)}\n`,
-      "utf8",
-    );
+    await fs.writeFile(path.join(partialDir, "export-report.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
     await fs.rename(partialDir, finalDir);
     logger("info", `Completed atomic Markdown export at ${finalDir}`);
     return report;

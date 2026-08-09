@@ -8,10 +8,11 @@ Dates are in YYYY-MM-DD.
 ## [Unreleased]
 
 - Added `splice twitter-markdown`, an atomic, collision-free public-writing
-  export for Obsidian and ordinary Markdown readers. It preserves authored
-  tweets, community tweets, published Articles, Note Tweets, reply identity,
-  social syntax, source links, and local media while explicitly excluding
-  private account categories and reporting every scope decision.
+  export for Obsidian and ordinary Markdown readers. It preserves Splice's
+  original daily-note and connected-thread reading model while adding published
+  Articles, community tweets, Note Tweets, a separate daily reply projection,
+  a complete source-to-file index, collision checks, atomic publication, and
+  explicit accounting for private or otherwise excluded archive categories.
 
 - Raw-Lync Markdown and training now consume
   `@deepfates/lync/presentation` instead of maintaining their own shallow text
