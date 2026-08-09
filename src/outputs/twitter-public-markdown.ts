@@ -15,8 +15,8 @@ export interface TwitterPublicMarkdownOptions {
 
 type ReplyContextStatus =
   | "authored"
+  | "deleted"
   | "liked"
-  | "liked-truncated"
   | "unavailable"
   | "missing";
 
@@ -117,9 +117,58 @@ function portablePathKey(value: string): string {
   return value.normalize("NFC").toLocaleLowerCase("en-US");
 }
 
+function assertTwitterId(value: string, label: string): void {
+  if (!/^\d+$/.test(value)) {
+    throw new Error(`twitter public markdown: invalid ${label} ${JSON.stringify(value)}`);
+  }
+}
+
+function resolveWithin(root: string, relative: string): string {
+  const absolute = path.resolve(root, relative);
+  const relation = path.relative(root, absolute);
+  if (
+    relation === "" ||
+    relation === ".." ||
+    relation.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relation)
+  ) {
+    throw new Error(`twitter public markdown: output path escapes vault: ${relative}`);
+  }
+  return absolute;
+}
+
 function relativeMarkdownLink(from: string, to: string): string {
   const relative = path.relative(path.dirname(from), to).split(path.sep).join("/");
   return encodeURI(relative);
+}
+
+function markdownAlt(value: string): string {
+  return value
+    .replace(/\r\n?/g, "\n")
+    .replace(/\\/g, "\\\\")
+    .replace(/\[/g, "\\[")
+    .replace(/\]/g, "\\]")
+    .replace(/\n/g, " ");
+}
+
+export function portableMediaBasename(sourcePath: string): string {
+  const basename = path.basename(sourcePath).normalize("NFC");
+  const rawExtension = path.extname(basename);
+  let stem = basename.slice(0, basename.length - rawExtension.length)
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_")
+    .replace(/[#[\]()]/g, "_")
+    .replace(/[ .]+$/g, "");
+  let extension = rawExtension
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_")
+    .replace(/[#[\]()]/g, "_")
+    .replace(/[ .]+$/g, "")
+    .slice(0, 32);
+  if (/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i.test(stem)) stem = `_${stem}`;
+  if (!stem) stem = "media";
+  const maxStemLength = Math.max(1, 180 - extension.length);
+  stem = stem.slice(0, maxStemLength).replace(/[ .]+$/g, "") || "media";
+  if (extension === ".") extension = "";
+  return `${stem}${extension}`;
 }
 
 function buildMediaPlan(records: TwitterPublicWritingRecord[]): MediaPlan {
@@ -128,7 +177,7 @@ function buildMediaPlan(records: TwitterPublicWritingRecord[]): MediaPlan {
   for (const record of records) {
     for (const media of record.media) {
       if (!media.sourcePath || targets.has(media.sourcePath)) continue;
-      const target = path.join("media", record.id, path.basename(media.sourcePath));
+      const target = path.join("media", record.id, portableMediaBasename(media.sourcePath));
       const key = portablePathKey(target);
       const prior = used.get(key);
       if (prior && prior !== media.sourcePath) {
@@ -148,10 +197,10 @@ function contextStatus(
   if (!record.parentId) return null;
   if (recordsById.has(record.parentId)) return "authored";
   if (!record.replyContext) return "missing";
+  if (record.replyContext.source === "deleted-tweet") return "deleted";
   if (/This (?:Post|Tweet) is (?:from a suspended account|unavailable)/i.test(record.replyContext.text)) {
     return "unavailable";
   }
-  if (/…/.test(record.replyContext.text)) return "liked-truncated";
   return "liked";
 }
 
@@ -164,6 +213,8 @@ function buildVaultPlan(
   const recordsById = new Map<string, TwitterPublicWritingRecord>();
   const pathsById = new Map<string, string>();
   for (const record of records) {
+    assertTwitterId(record.id, "record id");
+    if (record.communityId) assertTwitterId(record.communityId, "community id");
     const relative = recordPath(record, timeZone);
     const key = portablePathKey(relative);
     if (usedPaths.has(key)) {
@@ -193,8 +244,8 @@ function buildVaultPlan(
 
   const replyContext: TwitterPublicMarkdownReport["replyContext"] = {
     authored: 0,
+    deleted: 0,
     liked: 0,
-    "liked-truncated": 0,
     unavailable: 0,
     missing: 0,
   };
@@ -246,8 +297,8 @@ function parentContextMarkdown(
   const context = record.replyContext;
   const label = record.replyToScreenName ? `@${record.replyToScreenName}` : "parent post";
   const status = contextStatus(record, plan.recordsById);
-  if (context && (status === "liked" || status === "liked-truncated")) {
-    const note = status === "liked-truncated" ? " — archived text may be truncated" : "";
+  if (context && (status === "liked" || status === "deleted")) {
+    const note = status === "deleted" ? " — recovered from a deleted-tweet record" : "";
     return [
       `> [In reply to ${label}](${context.sourceUrl})${note}`,
       ">",
@@ -268,9 +319,11 @@ function mediaMarkdown(
   return record.media.flatMap((media) => {
     if (media.sourcePath) {
       const target = targets.get(media.sourcePath);
-      return target ? [`![${media.alt}](${relativeMarkdownLink(outputPath, target)})`] : [];
+      return target
+        ? [`![${markdownAlt(media.alt)}](${relativeMarkdownLink(outputPath, target)})`]
+        : [];
     }
-    return media.url ? [`![${media.alt}](${media.url})`] : [];
+    return media.url ? [`![${markdownAlt(media.alt)}](${media.url})`] : [];
   });
 }
 
@@ -296,6 +349,7 @@ function renderRecord(
     `type: ${yamlString(record.kind)}`,
     `id: ${yamlString(record.id)}`,
     ...(record.createdAt ? [`date: ${yamlString(record.createdAt)}`] : []),
+    ...(record.deletedAt ? [`deleted_at: ${yamlString(record.deletedAt)}`] : []),
     ...(record.sourceUrl ? [`source: ${yamlString(record.sourceUrl)}`] : []),
     ...(record.parentId ? [`reply_to: ${yamlString(record.parentId)}`] : []),
     ...(status ? [`reply_context: ${yamlString(status)}`] : []),
@@ -307,6 +361,7 @@ function renderRecord(
   if (parentContext) body.push(parentContext);
   if (record.kind === "article" && record.title) body.push(`# ${prose(record.title)}`);
   if (record.text) body.push(prose(record.text));
+  else if (record.kind === "article") body.push("*Article body was not present in the archive.*");
   body.push(...mediaMarkdown(record, outputPath, mediaTargets));
 
   const related: string[] = [];
@@ -375,7 +430,7 @@ export async function writeTwitterPublicMarkdown(
     for (let index = 0; index < result.records.length; index += 1) {
       const record = result.records[index];
       const relative = plan.paths.get(record) as string;
-      const absolute = path.join(partialDir, relative);
+      const absolute = resolveWithin(partialDir, relative);
       await fs.mkdir(path.dirname(absolute), { recursive: true });
       await fs.writeFile(
         absolute,
@@ -390,13 +445,16 @@ export async function writeTwitterPublicMarkdown(
     if (copyMedia) {
       for (let index = 0; index < plan.media.sources.length; index += 1) {
         const source = plan.media.sources[index];
-        const target = path.join(partialDir, plan.media.targets.get(source) as string);
+        const target = resolveWithin(partialDir, plan.media.targets.get(source) as string);
         try {
           await fs.mkdir(path.dirname(target), { recursive: true });
           await fs.copyFile(source, target);
           report.mediaCopied += 1;
-        } catch {
+        } catch (error) {
           report.mediaMissing += 1;
+          throw new Error(
+            `could not copy media ${source}: ${error instanceof Error ? error.message : String(error)}`,
+          );
         }
         if ((index + 1) % 5_000 === 0) {
           logger("info", `Copied ${index + 1}/${plan.media.sources.length} media file(s)`);
@@ -408,6 +466,7 @@ export async function writeTwitterPublicMarkdown(
       id: record.id,
       kind: record.kind,
       createdAt: record.createdAt,
+      deletedAt: record.deletedAt ?? null,
       parentId: record.parentId,
       replyToAccountId: record.replyToAccountId,
       replyToOwnAccount: record.replyToOwnAccount,
@@ -432,8 +491,8 @@ export async function writeTwitterPublicMarkdown(
       `- Authored notes: ${result.records.length}`,
       `- Replies: ${report.replies}`,
       `- Replies with an authored parent: ${report.replyContext.authored}`,
+      `- Replies with context from a deleted-tweet record: ${report.replyContext.deleted}`,
       `- Replies with liked-post context: ${report.replyContext.liked}`,
-      `- Replies with possibly truncated liked-post context: ${report.replyContext["liked-truncated"]}`,
       `- Replies whose parent is unavailable: ${report.replyContext.unavailable}`,
       `- Replies whose parent is missing: ${report.replyContext.missing}`,
       `- Local media copied: ${report.mediaCopied}`,

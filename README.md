@@ -84,23 +84,27 @@ to an Obsidian vault:
 
 `twitter-markdown` is intentionally narrower than a whole-account dump. It
 includes authored tweets, community tweets, published Articles, and nonempty
-Note Tweets. It excludes retweets and standalone likes, but uses liked-post text
-to recover otherwise missing parent context for replies. DMs, Grok chats,
-drafts, and account metadata remain excluded; recent deleted tweets require
-`--include-deleted`. Every authored record becomes one standalone Markdown note
-under `tweets/`, `community-tweets/<community-id>/`, `notes/`, or `articles/`,
-sharded by year and month. A reply quotes the best parent text available and
-links to archived parents and direct children without flattening thread
-branches. Local media lives under `media/<tweet-id>/`. Minimal YAML preserves
-the source identity and relationship fields; machine-readable receipts live
-under the hidden `.splice/` directory rather than cluttering the writing
-folders.
+Note Tweets. It excludes retweets and standalone likes, but uses matched liked
+posts and excluded deleted-tweet records to recover otherwise missing parent
+context for replies. DMs, Grok chats, drafts, and account metadata remain
+excluded; recent authored deleted tweets require `--include-deleted`. Every
+authored record becomes one standalone Markdown note under `tweets/`,
+`community-tweets/<community-id>/`, `notes/`, `articles/`, or (when requested)
+`deleted-tweets/`, sharded by year and month. A reply quotes the best parent
+text available and links to archived parents and direct children without
+flattening thread branches. Local media lives under `media/<tweet-id>/`.
+Minimal YAML preserves source identity, relationship fields, and deletion time
+when present; machine-readable receipts live under the hidden `.splice/`
+directory rather than cluttering the writing folders. Published Articles whose
+body is absent from the archive are marked explicitly rather than appearing
+silently complete.
 
 The output directory must be new. Splice builds a sibling partial directory and
 renames it into place only after the complete note and media export succeeds.
-Use `--dry-run` to parse and inspect the report without writing, or `--no-media`
-for text-only notes. The command reads an extracted archive directory; it does
-not extract or upload the ZIP.
+Use `--dry-run` to parse and inspect the report without writing. `--no-media`
+omits archived local-media embeds and skips copying those files; externally
+hosted Article covers remain links. The command reads an extracted archive
+directory; it does not extract or upload the ZIP.
 
 The source checkout is the 0.4.0 release candidate and targets
 `@deepfates/lync` 0.4.0. The npm package remains at 0.1.1. Use the source

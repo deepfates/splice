@@ -28,7 +28,7 @@ export function twitterMarkdownUsage(): string {
     "",
     "Options:",
     "  --include-deleted       Include the archive's recent deleted-tweet records",
-    "  --no-media              Write Markdown links without copying local media",
+    "  --no-media              Omit archived local-media embeds and skip copying files",
     "  --dry-run, -n           Parse and reconcile without writing the export",
     "  --log-level <level>     debug|info|warn|error (default: info)",
     "  --quiet, -q             Errors only",

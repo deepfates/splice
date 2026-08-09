@@ -26,7 +26,7 @@ export interface TwitterReplyContext {
   text: string;
   sourceUrl: string;
   screenName: string | null;
-  source: "like";
+  source: "like" | "deleted-tweet";
 }
 
 export interface TwitterPublicWritingRecord {
@@ -35,6 +35,7 @@ export interface TwitterPublicWritingRecord {
   text: string;
   title?: string;
   createdAt: string | null;
+  deletedAt?: string | null;
   parentId: string | null;
   replyToAccountId: string | null;
   replyToOwnAccount: boolean | null;
@@ -70,7 +71,9 @@ export interface TwitterPublicWritingStats {
   replyContext: {
     parentIdsAbsentFromAuthoredArchive: number;
     likeRecordsScanned: number;
+    recoveredFromDeletedTweets: number;
     recoveredFromLikes: number;
+    unavailableFromLikes: number;
     stillMissing: number;
     coverage: number;
     unavailableLikeFiles: number;
@@ -110,6 +113,10 @@ function asIso(value: unknown): string | null {
     : null;
 }
 
+function isTwitterId(value: string): boolean {
+  return /^\d+$/.test(value);
+}
+
 async function readArchiveValue(filePath: string): Promise<unknown> {
   const raw = await fs.readFile(filePath, "utf8");
   const expression = raw
@@ -147,9 +154,39 @@ function manifestFiles(manifest: Manifest, type: string): string[] {
   );
 }
 
+function archiveCandidate(root: string, relative: string): string {
+  const resolvedRoot = path.resolve(root);
+  const candidate = path.resolve(resolvedRoot, relative);
+  const relation = path.relative(resolvedRoot, candidate);
+  if (
+    relation === "" ||
+    relation === ".." ||
+    relation.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relation)
+  ) {
+    throw new Error(`twitter public writing: archive member escapes selected directory: ${relative}`);
+  }
+  return candidate;
+}
+
+async function archiveMemberPath(root: string, relative: string): Promise<string> {
+  const candidate = archiveCandidate(root, relative);
+  const [realRoot, realMember] = await Promise.all([fs.realpath(root), fs.realpath(candidate)]);
+  const relation = path.relative(realRoot, realMember);
+  if (
+    relation === "" ||
+    relation === ".." ||
+    relation.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relation)
+  ) {
+    throw new Error(`twitter public writing: archive member escapes selected directory: ${relative}`);
+  }
+  return realMember;
+}
+
 async function accountIdentity(root: string): Promise<AccountIdentity> {
   try {
-    const values = await readArchiveArray(path.join(root, "data", "account.js"));
+    const values = await readArchiveArray(await archiveMemberPath(root, path.join("data", "account.js")));
     const first = values[0];
     if (isObject(first) && isObject(first.account)) {
       return {
@@ -164,7 +201,13 @@ async function accountIdentity(root: string): Promise<AccountIdentity> {
 }
 
 async function mediaMap(root: string, directory: string): Promise<Map<string, string[]>> {
-  const dir = path.join(root, "data", directory);
+  let dir: string;
+  try {
+    dir = await archiveMemberPath(root, path.join("data", directory));
+  } catch (error) {
+    if (isObject(error) && (error as { code?: unknown }).code === "ENOENT") return new Map();
+    throw error;
+  }
   const result = new Map<string, string[]>();
   let names: string[];
   try {
@@ -176,7 +219,7 @@ async function mediaMap(root: string, directory: string): Promise<Map<string, st
     const match = name.match(/^(\d+)-/);
     if (!match) continue;
     const sourcePath = path.join(dir, name);
-    const stat = await fs.stat(sourcePath);
+    const stat = await fs.lstat(sourcePath);
     if (!stat.isFile() || stat.size === 0) continue;
     const current = result.get(match[1]) ?? [];
     current.push(sourcePath);
@@ -201,9 +244,7 @@ function expandedText(raw: Record<string, unknown>, fallback: string): string {
     if (!isObject(value)) continue;
     const short = asString(value.url);
     const expanded = asString(value.expanded_url) ?? asString(value.expandedUrl);
-    if (short && expanded) {
-      text = text.split(short).join(expanded === short && /^https:\/\/t\.co\//.test(short) ? "" : expanded);
-    }
+    if (short && expanded) text = text.split(short).join(expanded);
   }
   const media = entities && Array.isArray(entities.media) ? entities.media : [];
   for (const value of media) {
@@ -224,7 +265,7 @@ function tweetRecord(
   if (!isObject(raw)) return "malformed";
   const id = asString(raw.id_str) ?? asString(raw.id);
   const sourceText = asString(raw.full_text) ?? asString(raw.text);
-  if (!id) return "malformed";
+  if (!id || !isTwitterId(id)) return "malformed";
   if (!sourceText) return "empty";
   if (
     /^RT @[A-Za-z0-9_]+:/.test(sourceText) ||
@@ -243,11 +284,16 @@ function tweetRecord(
     asString(raw.in_reply_to_user_id_str) ??
     asString(raw.in_reply_to_user_id) ??
     asString(raw.inReplyToUserId);
+  const communityId = kind === "community-tweet"
+    ? asString(raw.community_id_str) ?? asString(raw.community_id)
+    : null;
+  if (communityId && !isTwitterId(communityId)) return "malformed";
   return {
     id,
     kind,
     text: expandedText(raw, sourceText),
     createdAt: asIso(raw.created_at) ?? asIso(raw.createdAt),
+    deletedAt: kind === "deleted-tweet" ? asIso(raw.deleted_at) ?? asIso(raw.deletedAt) : undefined,
     parentId:
       asString(raw.in_reply_to_status_id_str) ??
       asString(raw.in_reply_to_status_id) ??
@@ -261,10 +307,7 @@ function tweetRecord(
       asString(raw.in_reply_to_screen_name) ?? asString(raw.inReplyToScreenName),
     replyContext: null,
     sourceUrl,
-    communityId:
-      kind === "community-tweet"
-        ? asString(raw.community_id_str) ?? asString(raw.community_id) ?? undefined
-        : undefined,
+    communityId: communityId ?? undefined,
     media: localMedia(media.get(id) ?? []),
   };
 }
@@ -282,7 +325,7 @@ function noteRecord(
   const text =
     (core && (asString(core.text) ?? asString(core.richtext))) ??
     asString(raw.text);
-  if (!id) return "malformed";
+  if (!id || !isTwitterId(id)) return "malformed";
   if (!text) return "empty";
   const tweetId = asString(raw.tweetId) ?? (core ? asString(core.tweetId) : null);
   return {
@@ -331,7 +374,7 @@ function articleRecord(
   const id = asString(raw.id);
   const title = asString(raw.title) ?? undefined;
   const text = articleBody(raw);
-  if (!id) return "malformed";
+  if (!id || !isTwitterId(id)) return "malformed";
   if (!title && !text) return "empty";
   const tweetId = asString(metadata.tweetId);
   const cover = asString(raw.coverMedia);
@@ -380,10 +423,11 @@ function emptyEmitted(): TwitterPublicWritingStats["emitted"] {
   };
 }
 
-async function attachLikedReplyContexts(
+async function attachReplyContexts(
   root: string,
   manifest: Manifest,
   records: TwitterPublicWritingRecord[],
+  excludedDeletedRecords: TwitterPublicWritingRecord[],
   logger: (level: Level, message: string) => void,
 ): Promise<TwitterPublicWritingStats["replyContext"]> {
   const authoredIds = new Set(records.map((record) => record.id));
@@ -391,11 +435,16 @@ async function attachLikedReplyContexts(
     record.parentId && !authoredIds.has(record.parentId) ? [record.parentId] : [],
   ));
   const likedText = new Map<string, { text: string; sourceUrl: string }>();
+  const deletedById = new Map(excludedDeletedRecords.map((record) => [record.id, record]));
   let likeRecordsScanned = 0;
   let unavailableLikeFiles = 0;
 
   for (const relative of manifestFiles(manifest, "like")) {
-    const filePath = path.join(root, relative);
+    const candidate = archiveCandidate(root, relative);
+    const filePath = await archiveMemberPath(root, relative).catch((error) => {
+      if (isObject(error) && (error as { code?: unknown }).code === "ENOENT") return candidate;
+      throw error;
+    });
     const stat = await fs.stat(filePath).catch(() => null);
     if (!stat?.isFile()) {
       unavailableLikeFiles += 1;
@@ -409,7 +458,7 @@ async function attachLikedReplyContexts(
       const raw = isObject(wrapper) && isObject(wrapper.like) ? wrapper.like : wrapper;
       if (!isObject(raw)) continue;
       const id = asString(raw.tweetId) ?? asString(raw.id);
-      if (!id || !absentParentIds.has(id) || likedText.has(id)) continue;
+      if (!id || !absentParentIds.has(id) || deletedById.has(id) || likedText.has(id)) continue;
       const text = asString(raw.fullText) ?? asString(raw.full_text) ?? asString(raw.text);
       if (!text) continue;
       likedText.set(id, {
@@ -424,6 +473,17 @@ async function attachLikedReplyContexts(
 
   for (const record of records) {
     if (!record.parentId) continue;
+    const deleted = deletedById.get(record.parentId);
+    if (deleted) {
+      record.replyContext = {
+        id: deleted.id,
+        text: deleted.text,
+        sourceUrl: `https://x.com/i/web/status/${deleted.id}`,
+        screenName: record.replyToScreenName,
+        source: "deleted-tweet",
+      };
+      continue;
+    }
     const context = likedText.get(record.parentId);
     if (!context) continue;
     record.replyContext = {
@@ -435,17 +495,29 @@ async function attachLikedReplyContexts(
     };
   }
 
-  const recoveredFromLikes = likedText.size;
+  const unavailablePattern = /This (?:Post|Tweet) is (?:from a suspended account|unavailable)/i;
+  const unavailableFromLikes = [...likedText.values()].filter((context) =>
+    unavailablePattern.test(context.text.trim())
+  ).length;
+  const recoveredFromLikes = likedText.size - unavailableFromLikes;
+  const recoveredFromDeletedTweets = [...absentParentIds].filter((id) => deletedById.has(id)).length;
   const parentIdsAbsentFromAuthoredArchive = absentParentIds.size;
   return {
     parentIdsAbsentFromAuthoredArchive,
     likeRecordsScanned,
+    recoveredFromDeletedTweets,
     recoveredFromLikes,
-    stillMissing: parentIdsAbsentFromAuthoredArchive - recoveredFromLikes,
+    unavailableFromLikes,
+    stillMissing:
+      parentIdsAbsentFromAuthoredArchive -
+      recoveredFromDeletedTweets -
+      recoveredFromLikes -
+      unavailableFromLikes,
     coverage:
       parentIdsAbsentFromAuthoredArchive === 0
         ? 0
-        : recoveredFromLikes / parentIdsAbsentFromAuthoredArchive,
+        : (recoveredFromDeletedTweets + recoveredFromLikes) /
+          parentIdsAbsentFromAuthoredArchive,
     unavailableLikeFiles,
   };
 }
@@ -455,7 +527,9 @@ export async function ingestTwitterPublicWriting(
   logger: (level: Level, message: string) => void,
   options: TwitterPublicWritingOptions = {},
 ): Promise<TwitterPublicWritingResult> {
-  const manifestValue = await readArchiveValue(path.join(root, "data", "manifest.js"));
+  const manifestValue = await readArchiveValue(
+    await archiveMemberPath(root, path.join("data", "manifest.js")),
+  );
   if (!isObject(manifestValue)) {
     throw new Error("twitter public writing: manifest.js must contain an object");
   }
@@ -499,7 +573,7 @@ export async function ingestTwitterPublicWriting(
     const values: unknown[] = [];
     for (const relative of manifestFiles(parsedManifest, type)) {
       logger("debug", `Reading ${relative}`);
-      values.push(...await readArchiveArray(path.join(root, relative)));
+      values.push(...await readArchiveArray(await archiveMemberPath(root, relative)));
     }
     return values;
   };
@@ -526,12 +600,17 @@ export async function ingestTwitterPublicWriting(
 
   const deletedTweets = await readType("deletedTweets");
   sourceRecords["deleted-tweet"] = deletedTweets.length;
+  const excludedDeletedRecords: TwitterPublicWritingRecord[] = [];
   if (options.includeDeleted) {
     for (const value of deletedTweets) {
       add(tweetRecord(value, "deleted-tweet", identity, deletedMedia));
     }
   } else {
     skipped.deletedTweets = deletedTweets.length;
+    for (const value of deletedTweets) {
+      const record = tweetRecord(value, "deleted-tweet", identity, deletedMedia);
+      if (typeof record !== "string") excludedDeletedRecords.push(record);
+    }
   }
 
   records.sort((a, b) => {
@@ -543,10 +622,11 @@ export async function ingestTwitterPublicWriting(
     throw new Error("twitter public writing: duplicate kind/id records in archive");
   }
 
-  const replyContext = await attachLikedReplyContexts(
+  const replyContext = await attachReplyContexts(
     root,
     parsedManifest,
     records,
+    excludedDeletedRecords,
     logger,
   );
 

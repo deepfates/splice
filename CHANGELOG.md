@@ -16,7 +16,10 @@ Dates are in YYYY-MM-DD.
   `.splice/`, with collision checks, atomic publication, and explicit accounting
   for private or otherwise excluded archive categories.
   Liked-post text is joined by tweet ID only when it recovers an otherwise
-  missing reply parent; unrelated likes remain absent from Markdown.
+  missing reply parent; unrelated likes remain absent from Markdown. Non-media
+  URL entities are preserved, excluded deleted records can supply honest parent
+  context, missing Article bodies are labeled, and media/path failures prevent
+  final publication rather than producing a broken vault.
 
 - Raw-Lync Markdown and training now consume
   `@deepfates/lync/presentation` instead of maintaining their own shallow text
