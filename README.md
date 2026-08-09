@@ -77,6 +77,27 @@ Run the published CLI (after install):
 
     npx splice --source /path/to/twitter-archive --out ./out
 
+Export an extracted Twitter/X archive as a portable Markdown collection suited
+to an Obsidian vault:
+
+    npx tsx splice.ts twitter-markdown --source ~/Downloads/twitter-archive --out ~/Downloads/twitter-markdown
+
+`twitter-markdown` is intentionally narrower than a whole-account dump. It
+includes authored tweets, community tweets, published Articles, and nonempty
+Note Tweets. It excludes retweets, likes, DMs, Grok chats, drafts, and account
+metadata; recent deleted tweets require `--include-deleted`. Each record gets a
+stable, ID-bearing path, YAML properties, exact reply identity, ordinary
+relative Markdown media links, and an original-X link when available. Hashtags
+and mentions remain readable. The output includes `README.md` and a machine-
+readable `export-report.json` whose counts reconcile the included and skipped
+records.
+
+The output directory must be new. Splice builds a sibling partial directory and
+renames it into place only after the complete note and media export succeeds.
+Use `--dry-run` to parse and inspect the report without writing, or `--no-media`
+for text-only notes. The command reads an extracted archive directory; it does
+not extract or upload the ZIP.
+
 The source checkout is the 0.4.0 release candidate and targets
 `@deepfates/lync` 0.4.0. The npm package remains at 0.1.1. Use the source
 checkout for the Lync, session-import, and session-search commands documented
@@ -111,6 +132,7 @@ Help (equivalent to `--help`):
       splice --glowfic <url> --out <dir> --assistant <name> [--assistant-regex <pattern>]
       splice --glowfic-board <url> --out <dir> --all-characters [--min-posts <n>]
       splice lync <command> [options]   (see "lync output" below)
+      splice twitter-markdown --source <twitter-dir> --out <new-dir> [--include-deleted] [--no-media]
 
     Options:
       --source <path>            Path to Twitter archive directory or Bluesky .car file
