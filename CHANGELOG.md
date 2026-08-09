@@ -13,6 +13,8 @@ Dates are in YYYY-MM-DD.
   Articles, community tweets, Note Tweets, a separate daily reply projection,
   a complete source-to-file index, collision checks, atomic publication, and
   explicit accounting for private or otherwise excluded archive categories.
+  Liked-post text is joined by tweet ID only when it recovers an otherwise
+  missing reply parent; unrelated likes remain absent from Markdown.
 
 - Raw-Lync Markdown and training now consume
   `@deepfates/lync/presentation` instead of maintaining their own shallow text

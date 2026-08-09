@@ -119,6 +119,19 @@ function mediaMarkdown(
   });
 }
 
+function replyContextMarkdown(record: TwitterPublicWritingRecord): string | null {
+  const context = record.replyContext;
+  if (!context) return null;
+  const attribution = context.screenName
+    ? `Replying to @${context.screenName}`
+    : "Reply context";
+  const quoted = context.text
+    .split("\n")
+    .map((line) => `> ${line}`.trimEnd())
+    .join("\n");
+  return `> [${attribution}](${context.sourceUrl})\n>\n${quoted}`;
+}
+
 function renderEntry(
   record: TwitterPublicWritingRecord,
   from: string,
@@ -130,7 +143,10 @@ function renderEntry(
   const body = [prose(record.text), ...mediaMarkdown(record, from, targets)]
     .filter(Boolean)
     .join("\n\n");
-  return `${heading}\n${body}`.trimEnd();
+  return [replyContextMarkdown(record), `${heading}\n${body}`]
+    .filter(Boolean)
+    .join("\n\n")
+    .trimEnd();
 }
 
 function groupByDate(
@@ -221,7 +237,7 @@ function threadDocuments(
     const relativePath = paths.get(thread) as string;
     const first = thread[0];
     const parts = thread.map((record) =>
-      [prose(record.text), ...mediaMarkdown(record, relativePath, targets)]
+      [replyContextMarkdown(record), prose(record.text), ...mediaMarkdown(record, relativePath, targets)]
         .filter(Boolean)
         .join("\n\n"),
     );
@@ -407,6 +423,9 @@ export async function writeTwitterPublicMarkdown(
       parentId: record.parentId,
       replyToAccountId: record.replyToAccountId,
       replyToOwnAccount: record.replyToOwnAccount,
+      replyToScreenName: record.replyToScreenName,
+      replyContextSource: record.replyContext?.source ?? null,
+      replyContextId: record.replyContext?.id ?? null,
       file: recordToFile.get(`${record.kind}:${record.id}`),
     }));
     await fs.writeFile(path.join(partialDir, "export-index.jsonl"), `${indexLines.join("\n")}\n`, "utf8");
@@ -424,13 +443,16 @@ export async function writeTwitterPublicMarkdown(
       `- Published Article files: ${built.articleFiles}`,
       `- Community-tweet daily files: ${built.communityFiles}`,
       `- Note-Tweet daily files: ${built.noteFiles}`,
+      `- Missing reply parents recovered from liked-post text: ${result.stats.replyContext.recoveredFromLikes}`,
+      `- Missing reply parents still without context: ${result.stats.replyContext.stillMissing}`,
       `- Local media copied: ${report.mediaCopied}`,
       `- Retweets excluded: ${result.stats.skipped.retweets}`,
       `- Article drafts excluded: ${result.stats.skipped.articleDrafts}`,
       `- Recent deleted tweets excluded: ${result.stats.skipped.deletedTweets}`,
       `- Counts reconciled: ${result.stats.totals.reconciled ? "yes" : "no"}`,
       `- Display timezone: ${timeZone}`,
-      "- Likes, direct messages, Grok chats, and account metadata are outside this export by design.",
+      "- Standalone likes are excluded; liked-post text is used only for matched reply context.",
+      "- Direct messages, Grok chats, and account metadata are outside this export by design.",
       "",
       "`export-index.jsonl` maps every included source record to its Markdown file without adding database-like metadata to each note.",
       "",

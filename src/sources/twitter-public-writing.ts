@@ -21,6 +21,14 @@ export interface TwitterPublicWritingMedia {
   type: "photo" | "video" | "unknown";
 }
 
+export interface TwitterReplyContext {
+  id: string;
+  text: string;
+  sourceUrl: string;
+  screenName: string | null;
+  source: "like";
+}
+
 export interface TwitterPublicWritingRecord {
   id: string;
   kind: TwitterPublicWritingKind;
@@ -30,6 +38,8 @@ export interface TwitterPublicWritingRecord {
   parentId: string | null;
   replyToAccountId: string | null;
   replyToOwnAccount: boolean | null;
+  replyToScreenName: string | null;
+  replyContext: TwitterReplyContext | null;
   sourceUrl: string | null;
   communityId?: string;
   media: TwitterPublicWritingMedia[];
@@ -56,6 +66,14 @@ export interface TwitterPublicWritingStats {
     emitted: number;
     skipped: number;
     reconciled: boolean;
+  };
+  replyContext: {
+    parentIdsAbsentFromAuthoredArchive: number;
+    likeRecordsScanned: number;
+    recoveredFromLikes: number;
+    stillMissing: number;
+    coverage: number;
+    unavailableLikeFiles: number;
   };
 }
 
@@ -97,7 +115,11 @@ async function readArchiveValue(filePath: string): Promise<unknown> {
   const expression = raw
     .trim()
     .replace(/^window\.[^=]+\s*=\s*/i, "")
-    .replace(/;\s*$/, "");
+    .replace(/;\s*$/, "")
+    // Twitter emits literal JS line/paragraph separators inside some liked text.
+    // Escaping them preserves the text and avoids JSON5's noisy compatibility warning.
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
   try {
     return JSON5.parse(expression);
   } catch (error) {
@@ -235,6 +257,9 @@ function tweetRecord(
       replyToAccountId && identity.accountId
         ? replyToAccountId === identity.accountId
         : null,
+    replyToScreenName:
+      asString(raw.in_reply_to_screen_name) ?? asString(raw.inReplyToScreenName),
+    replyContext: null,
     sourceUrl,
     communityId:
       kind === "community-tweet"
@@ -268,6 +293,8 @@ function noteRecord(
     parentId: null,
     replyToAccountId: null,
     replyToOwnAccount: null,
+    replyToScreenName: null,
+    replyContext: null,
     sourceUrl: tweetId
       ? identity.handle === "unknown"
         ? `https://x.com/i/web/status/${tweetId}`
@@ -320,6 +347,8 @@ function articleRecord(
     parentId: null,
     replyToAccountId: null,
     replyToOwnAccount: null,
+    replyToScreenName: null,
+    replyContext: null,
     sourceUrl: tweetId
       ? identity.handle === "unknown"
         ? `https://x.com/i/web/status/${tweetId}`
@@ -348,6 +377,76 @@ function emptyEmitted(): TwitterPublicWritingStats["emitted"] {
     "note-tweet": 0,
     article: 0,
     "deleted-tweet": 0,
+  };
+}
+
+async function attachLikedReplyContexts(
+  root: string,
+  manifest: Manifest,
+  records: TwitterPublicWritingRecord[],
+  logger: (level: Level, message: string) => void,
+): Promise<TwitterPublicWritingStats["replyContext"]> {
+  const authoredIds = new Set(records.map((record) => record.id));
+  const absentParentIds = new Set(records.flatMap((record) =>
+    record.parentId && !authoredIds.has(record.parentId) ? [record.parentId] : [],
+  ));
+  const likedText = new Map<string, { text: string; sourceUrl: string }>();
+  let likeRecordsScanned = 0;
+  let unavailableLikeFiles = 0;
+
+  for (const relative of manifestFiles(manifest, "like")) {
+    const filePath = path.join(root, relative);
+    const stat = await fs.stat(filePath).catch(() => null);
+    if (!stat?.isFile()) {
+      unavailableLikeFiles += 1;
+      logger("warn", `Reply context unavailable because ${relative} is missing`);
+      continue;
+    }
+    logger("debug", `Reading ${relative} for reply context`);
+    const values = await readArchiveArray(filePath);
+    likeRecordsScanned += values.length;
+    for (const wrapper of values) {
+      const raw = isObject(wrapper) && isObject(wrapper.like) ? wrapper.like : wrapper;
+      if (!isObject(raw)) continue;
+      const id = asString(raw.tweetId) ?? asString(raw.id);
+      if (!id || !absentParentIds.has(id) || likedText.has(id)) continue;
+      const text = asString(raw.fullText) ?? asString(raw.full_text) ?? asString(raw.text);
+      if (!text) continue;
+      likedText.set(id, {
+        text: text.replace(/\r\n?/g, "\n").trim(),
+        sourceUrl:
+          asString(raw.expandedUrl) ??
+          asString(raw.expanded_url) ??
+          `https://x.com/i/web/status/${id}`,
+      });
+    }
+  }
+
+  for (const record of records) {
+    if (!record.parentId) continue;
+    const context = likedText.get(record.parentId);
+    if (!context) continue;
+    record.replyContext = {
+      id: record.parentId,
+      text: context.text,
+      sourceUrl: context.sourceUrl,
+      screenName: record.replyToScreenName,
+      source: "like",
+    };
+  }
+
+  const recoveredFromLikes = likedText.size;
+  const parentIdsAbsentFromAuthoredArchive = absentParentIds.size;
+  return {
+    parentIdsAbsentFromAuthoredArchive,
+    likeRecordsScanned,
+    recoveredFromLikes,
+    stillMissing: parentIdsAbsentFromAuthoredArchive - recoveredFromLikes,
+    coverage:
+      parentIdsAbsentFromAuthoredArchive === 0
+        ? 0
+        : recoveredFromLikes / parentIdsAbsentFromAuthoredArchive,
+    unavailableLikeFiles,
   };
 }
 
@@ -444,6 +543,13 @@ export async function ingestTwitterPublicWriting(
     throw new Error("twitter public writing: duplicate kind/id records in archive");
   }
 
+  const replyContext = await attachLikedReplyContexts(
+    root,
+    parsedManifest,
+    records,
+    logger,
+  );
+
   const totals = {
     source:
       sourceRecords.tweet +
@@ -464,6 +570,6 @@ export async function ingestTwitterPublicWriting(
   logger("info", `Prepared ${records.length} public writing record(s) for @${identity.handle}`);
   return {
     records,
-    stats: { accountHandle: identity.handle, sourceRecords, emitted, skipped, totals },
+    stats: { accountHandle: identity.handle, sourceRecords, emitted, skipped, totals, replyContext },
   };
 }

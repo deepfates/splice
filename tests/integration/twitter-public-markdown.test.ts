@@ -41,6 +41,7 @@ describe("splice twitter-markdown", () => {
           article: { files: [{ fileName: "data/article.js" }] },
           articleMetadata: { files: [{ fileName: "data/article-metadata.js" }] },
           deletedTweets: { files: [{ fileName: "data/deleted-tweets.js" }] },
+          like: { files: [{ fileName: "data/like.js" }] },
           directMessages: { files: [{ fileName: "data/direct-messages.js" }] },
         },
       }),
@@ -100,6 +101,7 @@ describe("splice twitter-markdown", () => {
             created_at: "Wed Jan 01 15:00:00 +0000 2025",
             in_reply_to_status_id_str: "9999",
             in_reply_to_user_id_str: "other-1",
+            in_reply_to_screen_name: "somebody_else",
           },
         },
         {
@@ -176,6 +178,25 @@ describe("splice twitter-markdown", () => {
       wrapped("direct_messages", [{ dmConversation: { messages: [{ text: "private" }] } }]),
     );
     await fs.writeFile(
+      path.join(data, "like.js"),
+      wrapped("like", [
+        {
+          like: {
+            tweetId: "9999",
+            fullText: "The parent post recovered from likes.\nWith a second line.",
+            expandedUrl: "https://twitter.com/i/web/status/9999",
+          },
+        },
+        {
+          like: {
+            tweetId: "8888",
+            fullText: "An unrelated liked post that must not be exported.",
+            expandedUrl: "https://twitter.com/i/web/status/8888",
+          },
+        },
+      ]),
+    );
+    await fs.writeFile(
       path.join(data, "deleted-tweets.js"),
       wrapped("deleted_tweets", [{
         tweet: {
@@ -212,6 +233,14 @@ describe("splice twitter-markdown", () => {
     expect(report.stats.skipped.articleDrafts).toBe(1);
     expect(report.stats.skipped.deletedTweets).toBe(1);
     expect(report.stats.totals).toEqual({ source: 15, emitted: 12, skipped: 3, reconciled: true });
+    expect(report.stats.replyContext).toEqual({
+      parentIdsAbsentFromAuthoredArchive: 1,
+      likeRecordsScanned: 2,
+      recoveredFromLikes: 1,
+      stillMissing: 0,
+      coverage: 1,
+      unavailableLikeFiles: 0,
+    });
 
     const daily = await fs.readFile(path.join(out, "tweets_by_date", "2025-01-01.md"), "utf8");
     expect(daily).toContain("*[05:00 AM](https://x.com/archive_author/status/1004)*  \nFirst standalone post");
@@ -221,7 +250,10 @@ describe("splice twitter-markdown", () => {
     expect(daily).not.toContain("A reply to somebody else");
 
     const replies = await fs.readFile(path.join(out, "replies_by_date", "2025-01-01.md"), "utf8");
+    expect(replies).toContain("> [Replying to @somebody_else](https://twitter.com/i/web/status/9999)");
+    expect(replies).toContain("> The parent post recovered from likes.\n> With a second line.");
     expect(replies).toContain("A reply to somebody else");
+    expect(replies).not.toContain("An unrelated liked post");
 
     const threadFiles = await fs.readdir(path.join(out, "threads"));
     expect(threadFiles).toHaveLength(3);
@@ -248,7 +280,9 @@ describe("splice twitter-markdown", () => {
     expect(article).toContain("First paragraph.\n\nSecond paragraph.");
     expect(article).not.toContain("Do not export");
 
-    expect(await fs.readFile(path.join(out, "README.md"), "utf8")).not.toContain("private");
+    const readme = await fs.readFile(path.join(out, "README.md"), "utf8");
+    expect(readme).not.toContain("private");
+    expect(readme).toContain("liked-post text is used only for matched reply context");
     const index = (await fs.readFile(path.join(out, "export-index.jsonl"), "utf8"))
       .trim().split("\n").map((line) => JSON.parse(line));
     expect(index).toHaveLength(12);
@@ -257,6 +291,8 @@ describe("splice twitter-markdown", () => {
     );
     expect(index.find((entry) => entry.id === "1004")?.file).toBe("tweets_by_date/2025-01-01.md");
     expect(index.find((entry) => entry.id === "1006")?.file).toBe("replies_by_date/2025-01-01.md");
+    expect(index.find((entry) => entry.id === "1006")?.replyContextSource).toBe("like");
+    expect(index.find((entry) => entry.id === "1006")?.replyContextId).toBe("9999");
     expect(JSON.parse(await fs.readFile(path.join(out, "export-report.json"), "utf8"))).toEqual(report);
   });
 });

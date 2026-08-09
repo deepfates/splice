@@ -84,8 +84,10 @@ to an Obsidian vault:
 
 `twitter-markdown` is intentionally narrower than a whole-account dump. It
 includes authored tweets, community tweets, published Articles, and nonempty
-Note Tweets. It excludes retweets, likes, DMs, Grok chats, drafts, and account
-metadata; recent deleted tweets require `--include-deleted`. Each record gets a
+Note Tweets. It excludes retweets and standalone likes, but uses liked-post text
+to recover otherwise missing parent context for replies. DMs, Grok chats,
+drafts, and account metadata remain excluded; recent deleted tweets require
+`--include-deleted`. Each authored record gets a
 stable entry in `export-index.jsonl`, while the visible Markdown follows the
 original Splice archive idiom: chronological daily notes for standalone tweets,
 compact files for connected self-reply threads, minimal `Date` frontmatter,
