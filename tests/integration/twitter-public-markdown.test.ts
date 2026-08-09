@@ -221,13 +221,24 @@ describe("splice twitter-markdown", () => {
     );
     const report = JSON.parse(result.stdout);
     expect(report.records).toBe(12);
-    expect(report.filesWritten).toBe(8);
-    expect(report.dailyFiles).toBe(1);
-    expect(report.replyFiles).toBe(1);
-    expect(report.threadFiles).toBe(3);
-    expect(report.articleFiles).toBe(1);
-    expect(report.noteFiles).toBe(1);
-    expect(report.communityFiles).toBe(1);
+    expect(report.notesWritten).toBe(12);
+    expect(report.notesByKind).toEqual({
+      tweet: 9,
+      "community-tweet": 1,
+      "note-tweet": 1,
+      article: 1,
+      "deleted-tweet": 0,
+    });
+    expect(report.replies).toBe(4);
+    expect(report.replyContext).toEqual({
+      authored: 3,
+      liked: 1,
+      "liked-truncated": 0,
+      unavailable: 0,
+      missing: 0,
+    });
+    expect(report.authoredParentLinks).toBe(3);
+    expect(report.authoredChildLinks).toBe(3);
     expect(report.mediaCopied).toBe(1);
     expect(report.stats.skipped.retweets).toBe(1);
     expect(report.stats.skipped.articleDrafts).toBe(1);
@@ -242,40 +253,44 @@ describe("splice twitter-markdown", () => {
       unavailableLikeFiles: 0,
     });
 
-    const daily = await fs.readFile(path.join(out, "tweets_by_date", "2025-01-01.md"), "utf8");
-    expect(daily).toContain("*[05:00 AM](https://x.com/archive_author/status/1004)*  \nFirst standalone post");
-    expect(daily).toContain("\n\n---\n\n");
-    expect(daily).toContain("*[06:00 AM](https://x.com/archive_author/status/1005)*  \nSecond standalone post");
-    expect(daily).not.toContain("twitter_id:");
-    expect(daily).not.toContain("A reply to somebody else");
+    const index = (await fs.readFile(path.join(out, ".splice", "export-index.jsonl"), "utf8"))
+      .trim().split("\n").map((line) => JSON.parse(line));
+    expect(index).toHaveLength(12);
+    expect(new Set(index.map((entry) => entry.file)).size).toBe(12);
+    const entry = (id: string) => index.find((value) => value.id === id);
+    const note = async (id: string) => fs.readFile(path.join(out, entry(id)?.file), "utf8");
 
-    const replies = await fs.readFile(path.join(out, "replies_by_date", "2025-01-01.md"), "utf8");
-    expect(replies).toContain("> [Replying to @somebody_else](https://twitter.com/i/web/status/9999)");
-    expect(replies).toContain("> The parent post recovered from likes.\n> With a second line.");
-    expect(replies).toContain("A reply to somebody else");
-    expect(replies).not.toContain("An unrelated liked post");
+    const root = await note("1001");
+    expect(root).toContain('type: "tweet"');
+    expect(root).toContain('id: "1001"');
+    expect(root).toContain("\\#Same opening words @friend https://example.com/a");
+    expect(root).not.toContain("https://t.co/media");
+    expect(root).toContain("../../../media/1001/1001-image.jpg");
+    expect(root).toContain("### Replies in this archive");
+    expect(root).toContain(entry("1002")?.file.split("/").at(-1));
 
-    const threadFiles = await fs.readdir(path.join(out, "threads"));
-    expect(threadFiles).toHaveLength(3);
-    expect(new Set(threadFiles.map((name) => name.toLocaleLowerCase("en-US"))).size).toBe(3);
-    expect(threadFiles).toContain("All_I_want_to_do--1010.md");
-    expect(threadFiles).toContain("all_i_want_to_do--1020.md");
-    const primaryThread = threadFiles.find((name) => name.includes("Same_opening_words")) as string;
-    const thread = await fs.readFile(path.join(out, "threads", primaryThread), "utf8");
-    expect(thread).toContain("Date: 2025-01-01");
-    expect(thread).toContain("#Same opening words @friend https://example.com/a");
-    expect(thread).not.toContain("https://t.co/media");
-    expect(thread).toContain("#Same opening words @friend with a reply");
-    expect(thread).toContain("../images/_1001-image.jpg");
-    expect(thread).toContain("[View on Twitter](https://x.com/archive_author/status/1001)");
-    expect(thread).not.toContain("twitter_id:");
+    const authoredReply = await note("1002");
+    expect(authoredReply).toContain('reply_context: "authored"');
+    expect(authoredReply).toContain("> [In reply to an archived post]");
+    expect(authoredReply).toContain("> \\#Same opening words @friend https://example.com/a");
+    expect(authoredReply).toContain("#Same opening words @friend with a reply");
 
-    const articleFiles = await fs.readdir(path.join(out, "articles"));
-    expect(articleFiles).toHaveLength(1);
-    const article = await fs.readFile(
-      path.join(out, "articles", articleFiles[0]),
-      "utf8",
+    const externalReply = await note("1006");
+    expect(externalReply).toContain('reply_context: "liked"');
+    expect(externalReply).toContain("> [In reply to @somebody_else](https://twitter.com/i/web/status/9999)");
+    expect(externalReply).toContain("> The parent post recovered from likes.\n> With a second line.");
+    expect(externalReply).toContain("A reply to somebody else");
+    expect(externalReply).not.toContain("An unrelated liked post");
+
+    expect(entry("1004")?.file).toMatch(/^tweets\/2025\/01\/2025-01-01--.*--1004\.md$/);
+    expect(entry("1005")?.file).toMatch(/^tweets\/2025\/01\/2025-01-01--.*--1005\.md$/);
+    expect(entry("1010")?.file.toLocaleLowerCase("en-US")).not.toBe(
+      entry("1020")?.file.toLocaleLowerCase("en-US"),
     );
+    expect(entry("2001")?.file).toMatch(/^community-tweets\/community-1\/2025\/01\//);
+    expect(entry("2001")?.communityId).toBe("community-1");
+
+    const article = await note("4001");
     expect(article).toContain("# Published article");
     expect(article).toContain("First paragraph.\n\nSecond paragraph.");
     expect(article).not.toContain("Do not export");
@@ -283,16 +298,8 @@ describe("splice twitter-markdown", () => {
     const readme = await fs.readFile(path.join(out, "README.md"), "utf8");
     expect(readme).not.toContain("private");
     expect(readme).toContain("liked-post text is used only for matched reply context");
-    const index = (await fs.readFile(path.join(out, "export-index.jsonl"), "utf8"))
-      .trim().split("\n").map((line) => JSON.parse(line));
-    expect(index).toHaveLength(12);
-    expect(index.find((entry) => entry.id === "1001")?.file).toBe(
-      index.find((entry) => entry.id === "1002")?.file,
-    );
-    expect(index.find((entry) => entry.id === "1004")?.file).toBe("tweets_by_date/2025-01-01.md");
-    expect(index.find((entry) => entry.id === "1006")?.file).toBe("replies_by_date/2025-01-01.md");
-    expect(index.find((entry) => entry.id === "1006")?.replyContextSource).toBe("like");
-    expect(index.find((entry) => entry.id === "1006")?.replyContextId).toBe("9999");
-    expect(JSON.parse(await fs.readFile(path.join(out, "export-report.json"), "utf8"))).toEqual(report);
+    expect(await fs.stat(path.join(out, "threads")).catch(() => null)).toBeNull();
+    expect(await fs.stat(path.join(out, "replies_by_date")).catch(() => null)).toBeNull();
+    expect(JSON.parse(await fs.readFile(path.join(out, ".splice", "export-report.json"), "utf8"))).toEqual(report);
   });
 });

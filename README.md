@@ -87,16 +87,14 @@ includes authored tweets, community tweets, published Articles, and nonempty
 Note Tweets. It excludes retweets and standalone likes, but uses liked-post text
 to recover otherwise missing parent context for replies. DMs, Grok chats,
 drafts, and account metadata remain excluded; recent deleted tweets require
-`--include-deleted`. Each authored record gets a
-stable entry in `export-index.jsonl`, while the visible Markdown follows the
-original Splice archive idiom: chronological daily notes for standalone tweets,
-compact files for connected self-reply threads, minimal `Date` frontmatter,
-inline media, and original-X links. Replies to other accounts are retained in
-`replies_by_date/` so they do not swamp the standalone-tweet journal. Published
-Articles, community tweets, and Note Tweets receive their own readable
-projections. Hashtags and mentions remain readable. The output includes
-`README.md` and a machine-readable `export-report.json` whose counts reconcile
-the included and skipped records.
+`--include-deleted`. Every authored record becomes one standalone Markdown note
+under `tweets/`, `community-tweets/<community-id>/`, `notes/`, or `articles/`,
+sharded by year and month. A reply quotes the best parent text available and
+links to archived parents and direct children without flattening thread
+branches. Local media lives under `media/<tweet-id>/`. Minimal YAML preserves
+the source identity and relationship fields; machine-readable receipts live
+under the hidden `.splice/` directory rather than cluttering the writing
+folders.
 
 The output directory must be new. Splice builds a sibling partial directory and
 renames it into place only after the complete note and media export succeeds.

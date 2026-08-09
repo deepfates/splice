@@ -13,16 +13,21 @@ export interface TwitterPublicMarkdownOptions {
   timeZone?: string;
 }
 
+type ReplyContextStatus =
+  | "authored"
+  | "liked"
+  | "liked-truncated"
+  | "unavailable"
+  | "missing";
+
 export interface TwitterPublicMarkdownReport {
   records: number;
-  filesWritten: number;
-  dailyFiles: number;
-  replyFiles: number;
-  threadFiles: number;
-  articleFiles: number;
-  noteFiles: number;
-  communityFiles: number;
-  deletedFiles: number;
+  notesWritten: number;
+  notesByKind: Record<TwitterPublicWritingRecord["kind"], number>;
+  replies: number;
+  replyContext: Record<ReplyContextStatus, number>;
+  authoredParentLinks: number;
+  authoredChildLinks: number;
   mediaReferenced: number;
   mediaCopied: number;
   mediaMissing: number;
@@ -31,34 +36,51 @@ export interface TwitterPublicMarkdownReport {
   stats: TwitterPublicWritingResult["stats"];
 }
 
-interface Document {
-  relativePath: string;
-  records: TwitterPublicWritingRecord[];
-  markdown: string;
-}
-
 interface MediaPlan {
   sources: string[];
   targets: Map<string, string>;
 }
 
+interface VaultPlan {
+  paths: Map<TwitterPublicWritingRecord, string>;
+  recordsById: Map<string, TwitterPublicWritingRecord>;
+  pathsById: Map<string, string>;
+  childrenById: Map<string, TwitterPublicWritingRecord[]>;
+  media: MediaPlan;
+  replyContext: TwitterPublicMarkdownReport["replyContext"];
+  authoredParentLinks: number;
+  authoredChildLinks: number;
+}
+
 // Historical Splice exports rendered Pacific timestamps with a fixed UTC-8 offset.
 const DEFAULT_TIME_ZONE = "Etc/GMT+8";
 
-function prose(text: string): string {
-  return text.replace(/\r\n?/g, "\n").trim();
+function yamlString(value: string): string {
+  return JSON.stringify(value);
 }
 
-function firstWords(record: TwitterPublicWritingRecord): string {
-  return record.title || record.text.split(/\s+/).slice(0, 5).join(" ");
+function prose(text: string): string {
+  return text
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => {
+      if (/^ {0,3}#/.test(line)) return line.replace("#", "\\#");
+      if (/^ {0,3}(`{3,}|~{3,})/.test(line)) return `\\${line}`;
+      return line;
+    })
+    .join("\n")
+    .trim();
 }
 
 function slug(record: TwitterPublicWritingRecord): string {
-  const value = sanitizeFilename(firstWords(record), 64);
-  return value === "untitled" ? `tweet_${record.id}` : value;
+  const seed = record.title || record.text.split(/\s+/).slice(0, 8).join(" ");
+  const value = sanitizeFilename(seed, 64)
+    .replace(/_/g, "-")
+    .toLocaleLowerCase("en-US");
+  return value === "untitled" ? `${record.kind}-${record.id}` : value;
 }
 
-function dateOnly(record: TwitterPublicWritingRecord, timeZone: string): string {
+function localDate(record: TwitterPublicWritingRecord, timeZone: string): string {
   if (!record.createdAt) return "unknown-date";
   const date = new Date(record.createdAt);
   if (Number.isNaN(date.getTime())) return "unknown-date";
@@ -68,283 +90,248 @@ function dateOnly(record: TwitterPublicWritingRecord, timeZone: string): string 
     month: "2-digit",
     day: "2-digit",
   }).formatToParts(date);
-  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${value.year}-${value.month}-${value.day}`;
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
-function localTime(record: TwitterPublicWritingRecord, timeZone: string): string {
-  if (!record.createdAt) return "Unknown time";
-  const date = new Date(record.createdAt);
-  if (Number.isNaN(date.getTime())) return "Unknown time";
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: true,
-  }).format(date);
-}
-
-function mediaPlan(records: TwitterPublicWritingRecord[]): MediaPlan {
-  const byTarget = new Map<string, string>();
-  const targets = new Map<string, string>();
-  for (const source of [...new Set(records.flatMap((record) =>
-    record.media.flatMap((media) => media.sourcePath ? [media.sourcePath] : []),
-  ))].sort()) {
-    const target = path.join("images", `_${path.basename(source)}`);
-    const prior = byTarget.get(target);
-    if (prior && prior !== source) {
-      throw new Error(
-        `twitter public markdown: media collision at ${target} (${prior} and ${source})`,
-      );
-    }
-    byTarget.set(target, source);
-    targets.set(source, target);
+function kindDirectory(record: TwitterPublicWritingRecord): string {
+  if (record.kind === "community-tweet") {
+    return path.join("community-tweets", record.communityId ?? "unknown-community");
   }
-  return { sources: [...targets.keys()], targets };
+  if (record.kind === "note-tweet") return "notes";
+  if (record.kind === "article") return "articles";
+  if (record.kind === "deleted-tweet") return "deleted-tweets";
+  return "tweets";
+}
+
+function recordPath(record: TwitterPublicWritingRecord, timeZone: string): string {
+  const day = localDate(record, timeZone);
+  const [year, month] = day === "unknown-date" ? ["unknown", "unknown"] : day.split("-");
+  const directory = record.kind === "article"
+    ? path.join(kindDirectory(record), year)
+    : path.join(kindDirectory(record), year, month);
+  return path.join(directory, `${day}--${slug(record)}--${record.id}.md`);
+}
+
+function portablePathKey(value: string): string {
+  return value.normalize("NFC").toLocaleLowerCase("en-US");
+}
+
+function relativeMarkdownLink(from: string, to: string): string {
+  const relative = path.relative(path.dirname(from), to).split(path.sep).join("/");
+  return encodeURI(relative);
+}
+
+function buildMediaPlan(records: TwitterPublicWritingRecord[]): MediaPlan {
+  const targets = new Map<string, string>();
+  const used = new Map<string, string>();
+  for (const record of records) {
+    for (const media of record.media) {
+      if (!media.sourcePath || targets.has(media.sourcePath)) continue;
+      const target = path.join("media", record.id, path.basename(media.sourcePath));
+      const key = portablePathKey(target);
+      const prior = used.get(key);
+      if (prior && prior !== media.sourcePath) {
+        throw new Error(`twitter public markdown: media collision at ${target}`);
+      }
+      used.set(key, media.sourcePath);
+      targets.set(media.sourcePath, target);
+    }
+  }
+  return { sources: [...targets.keys()].sort(), targets };
+}
+
+function contextStatus(
+  record: TwitterPublicWritingRecord,
+  recordsById: Map<string, TwitterPublicWritingRecord>,
+): ReplyContextStatus | null {
+  if (!record.parentId) return null;
+  if (recordsById.has(record.parentId)) return "authored";
+  if (!record.replyContext) return "missing";
+  if (/This (?:Post|Tweet) is (?:from a suspended account|unavailable)/i.test(record.replyContext.text)) {
+    return "unavailable";
+  }
+  if (/…/.test(record.replyContext.text)) return "liked-truncated";
+  return "liked";
+}
+
+function buildVaultPlan(
+  records: TwitterPublicWritingRecord[],
+  timeZone: string,
+): VaultPlan {
+  const paths = new Map<TwitterPublicWritingRecord, string>();
+  const usedPaths = new Set<string>();
+  const recordsById = new Map<string, TwitterPublicWritingRecord>();
+  const pathsById = new Map<string, string>();
+  for (const record of records) {
+    const relative = recordPath(record, timeZone);
+    const key = portablePathKey(relative);
+    if (usedPaths.has(key)) {
+      throw new Error(`twitter public markdown: output collision at ${relative}`);
+    }
+    usedPaths.add(key);
+    paths.set(record, relative);
+    if (recordsById.has(record.id)) {
+      throw new Error(`twitter public markdown: ambiguous cross-kind id ${record.id}`);
+    }
+    recordsById.set(record.id, record);
+    pathsById.set(record.id, relative);
+  }
+
+  const childrenById = new Map<string, TwitterPublicWritingRecord[]>();
+  for (const record of records) {
+    if (!record.parentId || !recordsById.has(record.parentId)) continue;
+    const children = childrenById.get(record.parentId) ?? [];
+    children.push(record);
+    childrenById.set(record.parentId, children);
+  }
+  for (const children of childrenById.values()) {
+    children.sort((a, b) =>
+      (a.createdAt ?? "").localeCompare(b.createdAt ?? "") || a.id.localeCompare(b.id),
+    );
+  }
+
+  const replyContext: TwitterPublicMarkdownReport["replyContext"] = {
+    authored: 0,
+    liked: 0,
+    "liked-truncated": 0,
+    unavailable: 0,
+    missing: 0,
+  };
+  let authoredParentLinks = 0;
+  let authoredChildLinks = 0;
+  for (const record of records) {
+    const status = contextStatus(record, recordsById);
+    if (status) replyContext[status] += 1;
+    if (status === "authored") authoredParentLinks += 1;
+    authoredChildLinks += childrenById.get(record.id)?.length ?? 0;
+  }
+
+  return {
+    paths,
+    recordsById,
+    pathsById,
+    childrenById,
+    media: buildMediaPlan(records),
+    replyContext,
+    authoredParentLinks,
+    authoredChildLinks,
+  };
+}
+
+function quoted(text: string): string {
+  return prose(text)
+    .split("\n")
+    .map((line) => `> ${line}`.trimEnd())
+    .join("\n");
+}
+
+function parentContextMarkdown(
+  record: TwitterPublicWritingRecord,
+  outputPath: string,
+  plan: VaultPlan,
+): string | null {
+  if (!record.parentId) return null;
+  const parent = plan.recordsById.get(record.parentId);
+  if (parent) {
+    const parentPath = plan.pathsById.get(parent.id) as string;
+    return [
+      `> [In reply to an archived post](${relativeMarkdownLink(outputPath, parentPath)})`,
+      ">",
+      quoted(parent.text),
+    ].join("\n");
+  }
+
+  const fallbackUrl = `https://x.com/i/web/status/${record.parentId}`;
+  const context = record.replyContext;
+  const label = record.replyToScreenName ? `@${record.replyToScreenName}` : "parent post";
+  const status = contextStatus(record, plan.recordsById);
+  if (context && (status === "liked" || status === "liked-truncated")) {
+    const note = status === "liked-truncated" ? " — archived text may be truncated" : "";
+    return [
+      `> [In reply to ${label}](${context.sourceUrl})${note}`,
+      ">",
+      quoted(context.text),
+    ].join("\n");
+  }
+  if (status === "unavailable") {
+    return `[In reply to ${label}](${context?.sourceUrl ?? fallbackUrl}); parent text is unavailable.`;
+  }
+  return `[In reply to ${label}](${context?.sourceUrl ?? fallbackUrl}); parent text was not present in the archive.`;
 }
 
 function mediaMarkdown(
   record: TwitterPublicWritingRecord,
-  from: string,
+  outputPath: string,
   targets: Map<string, string>,
 ): string[] {
   return record.media.flatMap((media) => {
     if (media.sourcePath) {
       const target = targets.get(media.sourcePath);
-      if (!target) return [];
-      const relative = path.relative(path.dirname(from), target).split(path.sep).join("/");
-      return [`![${media.alt}](${encodeURI(relative)})`];
+      return target ? [`![${media.alt}](${relativeMarkdownLink(outputPath, target)})`] : [];
     }
     return media.url ? [`![${media.alt}](${media.url})`] : [];
   });
 }
 
-function replyContextMarkdown(record: TwitterPublicWritingRecord): string | null {
-  const context = record.replyContext;
-  if (!context) return null;
-  const attribution = context.screenName
-    ? `Replying to @${context.screenName}`
-    : "Reply context";
-  const quoted = context.text
-    .split("\n")
-    .map((line) => `> ${line}`.trimEnd())
-    .join("\n");
-  return `> [${attribution}](${context.sourceUrl})\n>\n${quoted}`;
+function linkLabel(record: TwitterPublicWritingRecord, timeZone: string): string {
+  const excerpt = (record.title || record.text)
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 72)
+    .replace(/[\[\]]/g, "");
+  return `${localDate(record, timeZone)} — ${excerpt || record.id}`;
 }
 
-function renderEntry(
+function renderRecord(
   record: TwitterPublicWritingRecord,
-  from: string,
+  outputPath: string,
+  plan: VaultPlan,
+  mediaTargets: Map<string, string>,
   timeZone: string,
-  targets: Map<string, string>,
 ): string {
-  const time = localTime(record, timeZone);
-  const heading = record.sourceUrl ? `*[${time}](${record.sourceUrl})*  ` : `*${time}*  `;
-  const body = [prose(record.text), ...mediaMarkdown(record, from, targets)]
-    .filter(Boolean)
-    .join("\n\n");
-  return [replyContextMarkdown(record), `${heading}\n${body}`]
-    .filter(Boolean)
-    .join("\n\n")
-    .trimEnd();
-}
+  const status = contextStatus(record, plan.recordsById);
+  const properties = [
+    "---",
+    `type: ${yamlString(record.kind)}`,
+    `id: ${yamlString(record.id)}`,
+    ...(record.createdAt ? [`date: ${yamlString(record.createdAt)}`] : []),
+    ...(record.sourceUrl ? [`source: ${yamlString(record.sourceUrl)}`] : []),
+    ...(record.parentId ? [`reply_to: ${yamlString(record.parentId)}`] : []),
+    ...(status ? [`reply_context: ${yamlString(status)}`] : []),
+    ...(record.communityId ? [`community_id: ${yamlString(record.communityId)}`] : []),
+    "---",
+  ];
+  const body: string[] = [];
+  const parentContext = parentContextMarkdown(record, outputPath, plan);
+  if (parentContext) body.push(parentContext);
+  if (record.kind === "article" && record.title) body.push(`# ${prose(record.title)}`);
+  if (record.text) body.push(prose(record.text));
+  body.push(...mediaMarkdown(record, outputPath, mediaTargets));
 
-function groupByDate(
-  records: TwitterPublicWritingRecord[],
-  timeZone: string,
-): Map<string, TwitterPublicWritingRecord[]> {
-  const result = new Map<string, TwitterPublicWritingRecord[]>();
-  for (const record of records) {
-    const day = dateOnly(record, timeZone);
-    const values = result.get(day) ?? [];
-    values.push(record);
-    result.set(day, values);
-  }
-  for (const values of result.values()) {
-    values.sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? "") || a.id.localeCompare(b.id));
-  }
-  return result;
-}
-
-function connectedTweetComponents(records: TwitterPublicWritingRecord[]): TwitterPublicWritingRecord[][] {
-  const byId = new Map(records.map((record) => [record.id, record]));
-  const neighbors = new Map(records.map((record) => [record.id, new Set<string>()]));
-  for (const record of records) {
-    if (!record.replyToOwnAccount || !record.parentId || !byId.has(record.parentId)) continue;
-    neighbors.get(record.id)?.add(record.parentId);
-    neighbors.get(record.parentId)?.add(record.id);
-  }
-  const visited = new Set<string>();
-  const components: TwitterPublicWritingRecord[][] = [];
-  for (const start of [...records].sort((a, b) => a.id.localeCompare(b.id))) {
-    if (visited.has(start.id)) continue;
-    const ids = [start.id];
-    visited.add(start.id);
-    const component: TwitterPublicWritingRecord[] = [];
-    while (ids.length > 0) {
-      const id = ids.pop() as string;
-      component.push(byId.get(id) as TwitterPublicWritingRecord);
-      for (const neighbor of [...(neighbors.get(id) ?? [])].sort().reverse()) {
-        if (visited.has(neighbor)) continue;
-        visited.add(neighbor);
-        ids.push(neighbor);
-      }
-    }
-    component.sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? "") || a.id.localeCompare(b.id));
-    components.push(component);
-  }
-  return components.sort((a, b) =>
-    (a[0]?.createdAt ?? "").localeCompare(b[0]?.createdAt ?? "") ||
-    (a[0]?.id ?? "").localeCompare(b[0]?.id ?? ""),
-  );
-}
-
-function uniqueThreadPaths(threads: TwitterPublicWritingRecord[][]): Map<TwitterPublicWritingRecord[], string> {
-  const bases = threads.map((thread) => slug(thread[0]));
-  const counts = new Map<string, number>();
-  const keys = bases.map((base) => base.normalize("NFC").toLocaleLowerCase("en-US"));
-  for (const key of keys) counts.set(key, (counts.get(key) ?? 0) + 1);
-  return new Map(threads.map((thread, index) => {
-    const base = bases[index];
-    const name = (counts.get(keys[index]) ?? 0) > 1 ? `${base}--${thread[0].id}` : base;
-    return [thread, path.join("threads", `${name}.md`)];
-  }));
-}
-
-function dailyDocuments(
-  records: TwitterPublicWritingRecord[],
-  directory: string,
-  timeZone: string,
-  targets: Map<string, string>,
-): Document[] {
-  return [...groupByDate(records, timeZone)].sort(([a], [b]) => a.localeCompare(b)).map(([day, values]) => {
-    const relativePath = path.join(directory, `${day}.md`);
-    return {
-      relativePath,
-      records: values,
-      markdown: `${values.map((record) => renderEntry(record, relativePath, timeZone, targets)).join("\n\n---\n\n")}\n`,
-    };
-  });
-}
-
-function threadDocuments(
-  threads: TwitterPublicWritingRecord[][],
-  timeZone: string,
-  targets: Map<string, string>,
-): Document[] {
-  const paths = uniqueThreadPaths(threads);
-  return threads.map((thread) => {
-    const relativePath = paths.get(thread) as string;
-    const first = thread[0];
-    const parts = thread.map((record) =>
-      [replyContextMarkdown(record), prose(record.text), ...mediaMarkdown(record, relativePath, targets)]
-        .filter(Boolean)
-        .join("\n\n"),
-    );
-    const footer = first.sourceUrl ? `\n\n[View on Twitter](${first.sourceUrl})` : "";
-    return {
-      relativePath,
-      records: thread,
-      markdown: `---\nDate: ${dateOnly(first, timeZone)}\n---\n\n\n${parts.join("\n\n\n\n")}${footer}\n`,
-    };
-  });
-}
-
-function articleDocuments(
-  records: TwitterPublicWritingRecord[],
-  timeZone: string,
-  targets: Map<string, string>,
-): Document[] {
-  const names = new Map<string, number>();
-  return records.map((record) => {
-    const base = slug(record);
-    const key = base.normalize("NFC").toLocaleLowerCase("en-US");
-    const count = names.get(key) ?? 0;
-    names.set(key, count + 1);
-    const name = count === 0 ? base : `${base}--${record.id}`;
-    const relativePath = path.join("articles", `${name}.md`);
-    const body = [
-      ...(record.title ? [`# ${prose(record.title)}`] : []),
-      ...(record.text ? [prose(record.text)] : []),
-      ...mediaMarkdown(record, relativePath, targets),
-      ...(record.sourceUrl ? [`[View on Twitter](${record.sourceUrl})`] : []),
-    ].join("\n\n");
-    return {
-      relativePath,
-      records: [record],
-      markdown: `---\nDate: ${dateOnly(record, timeZone)}\n---\n\n${body}\n`,
-    };
-  });
-}
-
-function buildDocuments(
-  records: TwitterPublicWritingRecord[],
-  timeZone: string,
-  targets: Map<string, string>,
-): {
-  documents: Document[];
-  dailyFiles: number;
-  replyFiles: number;
-  threadFiles: number;
-  articleFiles: number;
-  noteFiles: number;
-  communityFiles: number;
-  deletedFiles: number;
-} {
-  const tweets = records.filter((record) => record.kind === "tweet");
-  const components = connectedTweetComponents(tweets);
-  const threads = components.filter((component) => component.length > 1);
-  const singletons = components.filter((component) => component.length === 1).flat();
-  const standalone = singletons.filter((record) => !record.parentId);
-  const replies = singletons.filter((record) => record.parentId);
-  const daily = dailyDocuments(standalone, "tweets_by_date", timeZone, targets);
-  const replyDocs = dailyDocuments(replies, "replies_by_date", timeZone, targets);
-  const threadDocs = threadDocuments(threads, timeZone, targets);
-  const articles = articleDocuments(
-    records.filter((record) => record.kind === "article"),
-    timeZone,
-    targets,
-  );
-  const notes = dailyDocuments(
-    records.filter((record) => record.kind === "note-tweet"),
-    "notes_by_date",
-    timeZone,
-    targets,
-  );
-  const community = dailyDocuments(
-    records.filter((record) => record.kind === "community-tweet"),
-    "community_tweets_by_date",
-    timeZone,
-    targets,
-  );
-  const deleted = dailyDocuments(
-    records.filter((record) => record.kind === "deleted-tweet"),
-    "deleted_tweets_by_date",
-    timeZone,
-    targets,
-  );
-  const documents = [...daily, ...replyDocs, ...threadDocs, ...articles, ...notes, ...community, ...deleted];
-  const recordCount = documents.reduce((sum, document) => sum + document.records.length, 0);
-  if (recordCount !== records.length) {
-    throw new Error(
-      `twitter public markdown: document accounting failed (${recordCount} mapped != ${records.length} records)`,
+  const related: string[] = [];
+  if (record.sourceUrl) related.push(`[View original on X](${record.sourceUrl})`);
+  const children = plan.childrenById.get(record.id) ?? [];
+  if (children.length > 0) {
+    related.push(
+      "### Replies in this archive",
+      ...children.map((child) => {
+        const target = plan.paths.get(child) as string;
+        return `- [${linkLabel(child, timeZone)}](${relativeMarkdownLink(outputPath, target)})`;
+      }),
     );
   }
-  const pathCount = new Set(documents.map((document) =>
-    document.relativePath.normalize("NFC").toLocaleLowerCase("en-US"),
-  )).size;
-  if (pathCount !== documents.length) {
-    throw new Error("twitter public markdown: duplicate document output path");
-  }
+  if (related.length > 0) body.push(["---", ...related].join("\n\n"));
+  return `${properties.join("\n")}\n\n${body.filter(Boolean).join("\n\n").trim()}\n`;
+}
+
+function emptyKindCounts(): TwitterPublicMarkdownReport["notesByKind"] {
   return {
-    documents,
-    dailyFiles: daily.length,
-    replyFiles: replyDocs.length,
-    threadFiles: threadDocs.length,
-    articleFiles: articles.length,
-    noteFiles: notes.length,
-    communityFiles: community.length,
-    deletedFiles: deleted.length,
+    tweet: 0,
+    "community-tweet": 0,
+    "note-tweet": 0,
+    article: 0,
+    "deleted-tweet": 0,
   };
 }
 
@@ -356,24 +343,22 @@ export async function writeTwitterPublicMarkdown(
 ): Promise<TwitterPublicMarkdownReport> {
   const copyMedia = options.copyMedia !== false;
   const timeZone = options.timeZone ?? DEFAULT_TIME_ZONE;
-  // Validate the configured zone before doing any work.
   new Intl.DateTimeFormat("en-US", { timeZone }).format(new Date(0));
   const finalDir = path.resolve(outDir);
   const partialDir = `${finalDir}.partial-${process.pid}`;
-  const media = mediaPlan(result.records);
-  const renderedTargets = copyMedia ? media.targets : new Map<string, string>();
-  const built = buildDocuments(result.records, timeZone, renderedTargets);
+  const plan = buildVaultPlan(result.records, timeZone);
+  const notesByKind = emptyKindCounts();
+  for (const record of result.records) notesByKind[record.kind] += 1;
+  const renderedMediaTargets = copyMedia ? plan.media.targets : new Map<string, string>();
   const report: TwitterPublicMarkdownReport = {
     records: result.records.length,
-    filesWritten: options.dryRun ? 0 : built.documents.length,
-    dailyFiles: built.dailyFiles,
-    replyFiles: built.replyFiles,
-    threadFiles: built.threadFiles,
-    articleFiles: built.articleFiles,
-    noteFiles: built.noteFiles,
-    communityFiles: built.communityFiles,
-    deletedFiles: built.deletedFiles,
-    mediaReferenced: copyMedia ? media.sources.length : 0,
+    notesWritten: options.dryRun ? 0 : result.records.length,
+    notesByKind,
+    replies: result.records.filter((record) => record.parentId).length,
+    replyContext: plan.replyContext,
+    authoredParentLinks: plan.authoredParentLinks,
+    authoredChildLinks: plan.authoredChildLinks,
+    mediaReferenced: copyMedia ? plan.media.sources.length : 0,
     mediaCopied: 0,
     mediaMissing: 0,
     timeZone,
@@ -387,16 +372,25 @@ export async function writeTwitterPublicMarkdown(
     if (await fs.stat(partialDir).catch(() => null)) throw new Error(`partial output already exists: ${partialDir}`);
     await fs.mkdir(partialDir, { recursive: true });
 
-    for (const document of built.documents) {
-      const absolute = path.join(partialDir, document.relativePath);
+    for (let index = 0; index < result.records.length; index += 1) {
+      const record = result.records[index];
+      const relative = plan.paths.get(record) as string;
+      const absolute = path.join(partialDir, relative);
       await fs.mkdir(path.dirname(absolute), { recursive: true });
-      await fs.writeFile(absolute, document.markdown, "utf8");
+      await fs.writeFile(
+        absolute,
+        renderRecord(record, relative, plan, renderedMediaTargets, timeZone),
+        "utf8",
+      );
+      if ((index + 1) % 10_000 === 0) {
+        logger("info", `Wrote ${index + 1}/${result.records.length} Markdown note(s)`);
+      }
     }
 
     if (copyMedia) {
-      for (let index = 0; index < media.sources.length; index += 1) {
-        const source = media.sources[index];
-        const target = path.join(partialDir, media.targets.get(source) as string);
+      for (let index = 0; index < plan.media.sources.length; index += 1) {
+        const source = plan.media.sources[index];
+        const target = path.join(partialDir, plan.media.targets.get(source) as string);
         try {
           await fs.mkdir(path.dirname(target), { recursive: true });
           await fs.copyFile(source, target);
@@ -405,17 +399,11 @@ export async function writeTwitterPublicMarkdown(
           report.mediaMissing += 1;
         }
         if ((index + 1) % 5_000 === 0) {
-          logger("info", `Copied ${index + 1}/${media.sources.length} media file(s)`);
+          logger("info", `Copied ${index + 1}/${plan.media.sources.length} media file(s)`);
         }
       }
     }
 
-    const recordToFile = new Map<string, string>();
-    for (const document of built.documents) {
-      for (const record of document.records) {
-        recordToFile.set(`${record.kind}:${record.id}`, document.relativePath.split(path.sep).join("/"));
-      }
-    }
     const indexLines = result.records.map((record) => JSON.stringify({
       id: record.id,
       kind: record.kind,
@@ -424,41 +412,41 @@ export async function writeTwitterPublicMarkdown(
       replyToAccountId: record.replyToAccountId,
       replyToOwnAccount: record.replyToOwnAccount,
       replyToScreenName: record.replyToScreenName,
+      replyContext: contextStatus(record, plan.recordsById),
       replyContextSource: record.replyContext?.source ?? null,
       replyContextId: record.replyContext?.id ?? null,
-      file: recordToFile.get(`${record.kind}:${record.id}`),
+      communityId: record.communityId ?? null,
+      file: (plan.paths.get(record) as string).split(path.sep).join("/"),
     }));
-    await fs.writeFile(path.join(partialDir, "export-index.jsonl"), `${indexLines.join("\n")}\n`, "utf8");
+    const metadataDir = path.join(partialDir, ".splice");
+    await fs.mkdir(metadataDir, { recursive: true });
+    await fs.writeFile(path.join(metadataDir, "export-index.jsonl"), `${indexLines.join("\n")}\n`, "utf8");
 
     const readme = [
       `# Twitter archive @${result.stats.accountHandle}`,
       "",
-      "Portable Markdown generated by Splice in the original daily-note and thread-oriented archive style.",
+      "One clean Markdown file per authored public-writing record, generated by Splice.",
+      "Each reply includes the best parent context available and links to archived parents and children.",
       "Open this directory as an Obsidian vault or use it with any Markdown reader.",
       "",
-      `- Public writing records: ${result.records.length}`,
-      `- Daily tweet files: ${built.dailyFiles}`,
-      `- Daily reply files: ${built.replyFiles}`,
-      `- Thread files: ${built.threadFiles}`,
-      `- Published Article files: ${built.articleFiles}`,
-      `- Community-tweet daily files: ${built.communityFiles}`,
-      `- Note-Tweet daily files: ${built.noteFiles}`,
-      `- Missing reply parents recovered from liked-post text: ${result.stats.replyContext.recoveredFromLikes}`,
-      `- Missing reply parents still without context: ${result.stats.replyContext.stillMissing}`,
+      `- Authored notes: ${result.records.length}`,
+      `- Replies: ${report.replies}`,
+      `- Replies with an authored parent: ${report.replyContext.authored}`,
+      `- Replies with liked-post context: ${report.replyContext.liked}`,
+      `- Replies with possibly truncated liked-post context: ${report.replyContext["liked-truncated"]}`,
+      `- Replies whose parent is unavailable: ${report.replyContext.unavailable}`,
+      `- Replies whose parent is missing: ${report.replyContext.missing}`,
       `- Local media copied: ${report.mediaCopied}`,
-      `- Retweets excluded: ${result.stats.skipped.retweets}`,
-      `- Article drafts excluded: ${result.stats.skipped.articleDrafts}`,
-      `- Recent deleted tweets excluded: ${result.stats.skipped.deletedTweets}`,
       `- Counts reconciled: ${result.stats.totals.reconciled ? "yes" : "no"}`,
-      `- Display timezone: ${timeZone}`,
+      `- Display-date timezone: ${timeZone}`,
       "- Standalone likes are excluded; liked-post text is used only for matched reply context.",
-      "- Direct messages, Grok chats, and account metadata are outside this export by design.",
+      "- Retweets, drafts, direct messages, Grok chats, and account metadata are excluded.",
       "",
-      "`export-index.jsonl` maps every included source record to its Markdown file without adding database-like metadata to each note.",
+      "Machine-readable receipts are stored under `.splice/` so they do not clutter the writing folders.",
       "",
     ].join("\n");
     await fs.writeFile(path.join(partialDir, "README.md"), readme, "utf8");
-    await fs.writeFile(path.join(partialDir, "export-report.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
+    await fs.writeFile(path.join(metadataDir, "export-report.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
     await fs.rename(partialDir, finalDir);
     logger("info", `Completed atomic Markdown export at ${finalDir}`);
     return report;

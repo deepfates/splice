@@ -8,11 +8,13 @@ Dates are in YYYY-MM-DD.
 ## [Unreleased]
 
 - Added `splice twitter-markdown`, an atomic, collision-free public-writing
-  export for Obsidian and ordinary Markdown readers. It preserves Splice's
-  original daily-note and connected-thread reading model while adding published
-  Articles, community tweets, Note Tweets, a separate daily reply projection,
-  a complete source-to-file index, collision checks, atomic publication, and
-  explicit accounting for private or otherwise excluded archive categories.
+  export for Obsidian and ordinary Markdown readers. Each authored tweet,
+  community tweet, Note Tweet, or published Article becomes a standalone note
+  with minimal source metadata, per-record media, and bidirectional links
+  between archived parents and children. Thread branches remain relationships
+  instead of being flattened into aggregate documents. Receipts live under
+  `.splice/`, with collision checks, atomic publication, and explicit accounting
+  for private or otherwise excluded archive categories.
   Liked-post text is joined by tweet ID only when it recovers an otherwise
   missing reply parent; unrelated likes remain absent from Markdown.
 
