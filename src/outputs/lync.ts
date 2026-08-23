@@ -272,9 +272,15 @@ export function contentItemsToLyncEvents(
       return;
     }
     const ns = namespaceForSource(item.source);
+    // A like is a reaction *to* a post, not the post itself. Minting it under
+    // the post's id collides whenever the archive owner liked their own tweet
+    // (same id, different bytes → conflict-variant). Likes get their own label
+    // and point at the liked post as a parent (dangling when not authored,
+    // which FORMAT.md permits).
+    const isLike = item.source === "twitter:like";
     const ev: LyncEventBody = {
       v: 1,
-      id: deterministicLyncId(ns, "item", item.id),
+      id: deterministicLyncId(ns, isLike ? "like" : "item", item.id),
       kind: kindForSource(item.source),
       at: normalizeAt(item.createdAt, index, fallbackAt, timestampFallbacks),
       author: buildAuthor(
@@ -282,9 +288,11 @@ export function contentItemsToLyncEvents(
         opts,
         item.id,
       ) as unknown as LyncEventBody["author"],
-      parents: item.parentId
-        ? [deterministicLyncId(ns, "item", item.parentId)]
-        : [],
+      parents: isLike
+        ? [deterministicLyncId(ns, "item", item.id)]
+        : item.parentId
+          ? [deterministicLyncId(ns, "item", item.parentId)]
+          : [],
       payload: (item.raw ?? { ...item }) as Record<string, unknown>,
     };
     if (opts.markedAt !== undefined) ev.marked = opts.markedAt;
@@ -552,10 +560,26 @@ export async function writeLyncFile(
   filePath: string,
   events: LyncEventBody[],
 ): Promise<void> {
-  const body = events.map((ev) => `${serializeLyncEvent(ev)}\n`).join("");
   await fs.mkdir(path.dirname(path.resolve(filePath)), { recursive: true });
-  await fs.writeFile(filePath, body, "utf8");
+  // Stream one line at a time: a full-size archive (hundreds of thousands of
+  // events) overflows V8's maximum string length when joined in memory.
+  const handle = await fs.open(filePath, "w");
+  try {
+    let chunk: string[] = [];
+    for (const ev of events) {
+      chunk.push(`${serializeLyncEvent(ev)}\n`);
+      if (chunk.length >= WRITE_CHUNK_EVENTS) {
+        await handle.write(chunk.join(""), null, "utf8");
+        chunk = [];
+      }
+    }
+    if (chunk.length > 0) await handle.write(chunk.join(""), null, "utf8");
+  } finally {
+    await handle.close();
+  }
 }
+
+const WRITE_CHUNK_EVENTS = 1000;
 
 /**
  * Re-parse a written `.lync` file with @deepfates/lync's parseLyncFiles and require
