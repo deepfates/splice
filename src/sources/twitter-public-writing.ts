@@ -332,7 +332,7 @@ function noteRecord(
   return {
     id,
     kind: "note-tweet",
-    text: text.replace(/\r\n?/g, "\n").trim(),
+    text: decodeTwitterEntities(text.replace(/\r\n?/g, "\n")).trim(),
     createdAt: asIso(raw.createdAt),
     parentId: null,
     replyToAccountId: null,
@@ -463,7 +463,7 @@ async function attachReplyContexts(
       const text = asString(raw.fullText) ?? asString(raw.full_text) ?? asString(raw.text);
       if (!text) continue;
       likedText.set(id, {
-        text: text.replace(/\r\n?/g, "\n").trim(),
+        text: decodeTwitterEntities(text.replace(/\r\n?/g, "\n")).trim(),
         sourceUrl:
           asString(raw.expandedUrl) ??
           asString(raw.expanded_url) ??
