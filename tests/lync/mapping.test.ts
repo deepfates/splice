@@ -212,3 +212,17 @@ describe("write + verify round trip", () => {
     }
   });
 });
+
+describe("self-likes", () => {
+  it("mints a like under its own id and parents it to the liked tweet", () => {
+    const authored = tweet({ id: "42", source: "twitter:tweet" });
+    const liked = tweet({ id: "42", source: "twitter:like" });
+    const { events } = contentItemsToLyncEvents([authored, liked], OPTS);
+    expect(events).toHaveLength(2);
+    const [post, like] = events;
+    expect(like.id).not.toBe(post.id);
+    expect(like.kind).toBe("twitter/like");
+    expect(like.parents).toEqual([post.id]);
+    expect(post.parents).toEqual([]);
+  });
+});
