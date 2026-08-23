@@ -60,17 +60,19 @@ function yamlString(value: string): string {
 }
 
 function prose(text: string): string {
+  // Tweet text is prose. Escape the few characters that Markdown (and MDX)
+  // would otherwise read as structure: a leading "#" (heading), a leading
+  // ">" (blockquote — greentext is common), a leading fence, and tag-like
+  // "<" anywhere ("<thinking>" is text in a tweet, not a tag).
   return text
     .replace(/\r\n?/g, "\n")
     .split("\n")
     .map((line) => {
-      if (/^ {0,3}#/.test(line)) return line.replace("#", "\\#");
-      // A tweet that starts a line with ">" (greentext) is prose, not a quote.
-      if (/^ {0,3}>/.test(line)) return line.replace(">", "\\>");
-      if (/^ {0,3}(`{3,}|~{3,})/.test(line)) return `\\${line}`;
-      // "<thinking>" in a tweet is text, not a tag. Escape tag-like "<" so
-      // Markdown and MDX readers do not parse it as HTML/JSX.
-      return line.replace(/<(?=[A-Za-z/!?])/g, "\\<");
+      let out = line;
+      if (/^ {0,3}#/.test(out)) out = out.replace("#", "\\#");
+      else if (/^ {0,3}>/.test(out)) out = out.replace(">", "\\>");
+      else if (/^ {0,3}(`{3,}|~{3,})/.test(out)) out = `\\${out}`;
+      return out.replace(/<(?=[A-Za-z/!?])/g, "\\<");
     })
     .join("\n")
     .trim();
