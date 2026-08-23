@@ -72,6 +72,13 @@ describe("splice twitter-markdown", () => {
         },
         {
           tweet: {
+            id_str: "1003",
+            full_text: "&gt;be me &amp; ship &lt;code&gt;\n&gt;greentext stays prose",
+            created_at: "Wed Jan 01 12:02:00 +0000 2025",
+          },
+        },
+        {
+          tweet: {
             id_str: "1002",
             full_text: "#Same opening words @friend with a reply",
             created_at: "Wed Jan 01 12:01:00 +0000 2025",
@@ -275,10 +282,10 @@ describe("splice twitter-markdown", () => {
       { cwd: projectRoot },
     );
     const report = JSON.parse(result.stdout);
-    expect(report.records).toBe(17);
-    expect(report.notesWritten).toBe(17);
+    expect(report.records).toBe(18);
+    expect(report.notesWritten).toBe(18);
     expect(report.notesByKind).toEqual({
-      tweet: 13,
+      tweet: 14,
       "community-tweet": 1,
       "note-tweet": 1,
       article: 2,
@@ -298,7 +305,7 @@ describe("splice twitter-markdown", () => {
     expect(report.stats.skipped.retweets).toBe(1);
     expect(report.stats.skipped.articleDrafts).toBe(1);
     expect(report.stats.skipped.deletedTweets).toBe(1);
-    expect(report.stats.totals).toEqual({ source: 20, emitted: 17, skipped: 3, reconciled: true });
+    expect(report.stats.totals).toEqual({ source: 21, emitted: 18, skipped: 3, reconciled: true });
     expect(report.stats.replyContext).toEqual({
       parentIdsAbsentFromAuthoredArchive: 3,
       likeRecordsScanned: 3,
@@ -312,8 +319,8 @@ describe("splice twitter-markdown", () => {
 
     const index = (await fs.readFile(path.join(out, ".splice", "export-index.jsonl"), "utf8"))
       .trim().split("\n").map((line) => JSON.parse(line));
-    expect(index).toHaveLength(17);
-    expect(new Set(index.map((entry) => entry.file)).size).toBe(17);
+    expect(index).toHaveLength(18);
+    expect(new Set(index.map((entry) => entry.file)).size).toBe(18);
     const entry = (id: string) => index.find((value) => value.id === id);
     const note = async (id: string) => fs.readFile(path.join(out, entry(id)?.file), "utf8");
 
@@ -321,6 +328,9 @@ describe("splice twitter-markdown", () => {
     expect(root).toContain('type: "tweet"');
     expect(root).toContain('id: "1001"');
     expect(root).toContain("\\#Same opening words @friend https://example.com/a");
+    const greentext = await note("1003");
+    expect(greentext).toContain("\\>be me & ship <code>\n\\>greentext stays prose");
+    expect(greentext).not.toContain("&gt;");
     expect(root).not.toContain("https://t.co/media");
     expect(root).toContain("../../../media/1001/1001-image.jpg");
     expect(root).toContain("![1001-a\\]b).jpg](../../../media/1001/1001-a_b_.jpg)");
@@ -411,7 +421,7 @@ describe("splice twitter-markdown", () => {
       { cwd: projectRoot },
     );
     const report = JSON.parse(result.stdout);
-    expect(report.records).toBe(18);
+    expect(report.records).toBe(19);
     expect(report.notesByKind["deleted-tweet"]).toBe(1);
     expect(report.stats.skipped.deletedTweets).toBe(0);
     expect(report.replyContext.authored).toBe(5);

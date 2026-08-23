@@ -65,6 +65,8 @@ function prose(text: string): string {
     .split("\n")
     .map((line) => {
       if (/^ {0,3}#/.test(line)) return line.replace("#", "\\#");
+      // A tweet that starts a line with ">" (greentext) is prose, not a quote.
+      if (/^ {0,3}>/.test(line)) return line.replace(">", "\\>");
       if (/^ {0,3}(`{3,}|~{3,})/.test(line)) return `\\${line}`;
       return line;
     })
