@@ -329,7 +329,7 @@ describe("splice twitter-markdown", () => {
     expect(root).toContain('id: "1001"');
     expect(root).toContain("\\#Same opening words @friend https://example.com/a");
     const greentext = await note("1003");
-    expect(greentext).toContain("\\>be me & ship <code>\n\\>greentext stays prose");
+    expect(greentext).toContain("\\>be me & ship \\<code>\n\\>greentext stays prose");
     expect(greentext).not.toContain("&gt;");
     expect(root).not.toContain("https://t.co/media");
     expect(root).toContain("../../../media/1001/1001-image.jpg");
