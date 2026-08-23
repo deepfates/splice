@@ -226,3 +226,13 @@ describe("self-likes", () => {
     expect(post.parents).toEqual([]);
   });
 });
+
+describe("decodeTwitterEntities", () => {
+  it("decodes the escapes Twitter archives use and nothing else", async () => {
+    const { decodeTwitterEntities } = await import("../../src/transforms/core.js");
+    expect(decodeTwitterEntities("&gt; quote &amp; &lt;tag&gt; &quot;x&quot; it&#39;s")).toBe(
+      "> quote & <tag> \"x\" it's",
+    );
+    expect(decodeTwitterEntities("a &nbsp; b")).toBe("a &nbsp; b");
+  });
+});

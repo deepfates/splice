@@ -1,6 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import JSON5 from "json5";
+import { decodeTwitterEntities } from "../transforms/core.js";
 
 import {
   type Level,
@@ -237,7 +238,7 @@ function localMedia(paths: string[]): TwitterPublicWritingMedia[] {
 }
 
 function expandedText(raw: Record<string, unknown>, fallback: string): string {
-  let text = fallback.replace(/\r\n?/g, "\n");
+  let text = decodeTwitterEntities(fallback.replace(/\r\n?/g, "\n"));
   const entities = isObject(raw.entities) ? raw.entities : null;
   const urls = entities && Array.isArray(entities.urls) ? entities.urls : [];
   for (const value of urls) {
