@@ -6,7 +6,8 @@ maintaining a second copy of every flag.
 
 ## Availability
 
-This reference describes branch `codex/twitter-public-markdown-export` at
+This reference describes branch `codex/twitter-public-markdown-export`, whose
+documented product implementation is rooted at
 `e7ce97efccffa8951448dab18e772c6041aafb6c` (source metadata 0.4.0, Node.js
 22+). It is neither the default `main` branch nor an npm release. npm `latest`
 is 0.1.1 as of 2026-09-06 and lacks Lync, `twitter-markdown`, `session-import`,
@@ -14,15 +15,16 @@ and `session-search`. Provisional dirty media/FiftyOne additions are outside
 this reference.
 
 [README availability](../README.md#availability-source-checkout-versus-npm)
-records the current clean-install dependency failure; there is no documented
-workaround. In an existing compatible environment, invoke the source CLI with:
+owns the source-pinned Lync provenance and release boundary. In this source
+checkout, install and invoke the CLI with:
 
 ```sh
+npm ci
 npx tsx splice.ts <arguments>
 ```
 
-That compatible environment can instead run `npm run build` and substitute
-`node dist/cli/splice.js` below.
+Alternatively run `npm run build` and substitute `node dist/cli/splice.js`
+below.
 
 ## Help entry points
 
