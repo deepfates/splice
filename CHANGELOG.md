@@ -39,10 +39,11 @@ Dates are in YYYY-MM-DD.
 - Syncable browser Looms carry readable text and explicit provenance without
   copying arbitrary unpresented provider fields from archive records.
 
-## [0.4.0] - Unpublished release candidate
+### 0.4.0 candidate baseline
 
-This release candidate targets `@deepfates/lync` 0.4.0 and Node.js 22 or newer.
-Registry publication remains sequenced after the Lync 0.4.0 publication.
+The current source candidate targets `@deepfates/lync` 0.4.0 and Node.js 22 or
+newer. It has not been published as `@deepfates/splice` 0.4.0; npm `latest`
+remains 0.1.1 as of 2026-09-06.
 
 ### Added
 - Deterministic raw Lync importers for Twitter archives, Glowfic, OCR page sets,
@@ -111,8 +112,6 @@ Registry publication remains sequenced after the Lync 0.4.0 publication.
 - JSON now included in default output formats
 
 [0.3.0]: https://github.com/deepfates/splice/compare/v0.2.0...v0.3.0
-
-[0.4.0]: https://github.com/deepfates/splice/compare/v0.3.0...HEAD
 
 [0.2.0]: https://github.com/deepfates/splice/compare/v0.1.2...v0.2.0
 
