@@ -13,13 +13,16 @@ is 0.1.1 as of 2026-09-06 and lacks Lync, `twitter-markdown`, `session-import`,
 and `session-search`. Provisional dirty media/FiftyOne additions are outside
 this reference.
 
-Run source after `npm install`:
+[README availability](../README.md#availability-source-checkout-versus-npm)
+records the current clean-install dependency failure; there is no documented
+workaround. In an existing compatible environment, invoke the source CLI with:
 
 ```sh
 npx tsx splice.ts <arguments>
 ```
 
-Or run `npm run build` and substitute `node dist/cli/splice.js` below.
+That compatible environment can instead run `npm run build` and substitute
+`node dist/cli/splice.js` below.
 
 ## Help entry points
 
