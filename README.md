@@ -25,35 +25,37 @@ The npm `latest` release is 0.1.1 (verified 2026-09-06). It has the older social
 pipeline, requires Node.js 18+, and does **not** contain the current Lync,
 `twitter-markdown`, `session-import`, or `session-search` surfaces.
 
-The commands below describe source branch `codex/twitter-public-markdown-export`
-at commit `e7ce97efccffa8951448dab18e772c6041aafb6c`, whose package metadata declares
-0.4.0 and Node.js 22+. That commit is not an npm release or the default `main`
-branch. Uncommitted extensions, including provisional media/FiftyOne work when
-present, are outside the source surface documented here.
+The commands below describe source branch `codex/twitter-public-markdown-export`,
+whose documented product implementation is rooted at commit
+`e7ce97efccffa8951448dab18e772c6041aafb6c`. Its package metadata declares 0.4.0
+and Node.js 22+. This source is not an npm release or the default `main` branch.
+Uncommitted extensions, including provisional media/FiftyOne work when present,
+are outside the source surface documented here.
 
-Clean installation of this source checkout is currently blocked. The declared
-and locked `@deepfates/lync@0.4.0` package does not export the
-`@deepfates/lync/presentation` subpath imported by Splice, so an exact-index
-Node.js 22 cold check on 2026-09-06 failed during `npm ci`'s build. Successful
-workshop exercises used a provisioned sibling Lync 0.4.3 checkout and are not
-clean-install evidence. There is currently no documented reproducible setup path
-around this dependency failure.
+The checkout pins `@deepfates/lync@0.4.3` to an exact source-built archive under
+`vendor/`; [its provenance record](vendor/LYNC-PROVENANCE.md) owns the source
+commit and checksum. On 2026-09-06, a clean exact-index checkout using Node.js
+22.23.2 completed `npm ci`, built Splice, and produced every artifact in the
+checked-in fixture exercise below. This proves the source checkout path, not an
+npm release of Splice or Lync.
 
-In an existing compatible environment, inspect the source CLI with:
+Install and inspect the source CLI with:
 
 ```sh
+npm ci
 npx tsx splice.ts --help
 ```
 
-That environment can also build and invoke the same source CLI:
+Build and invoke the same source CLI with:
 
 ```sh
 npm run build
 node dist/cli/splice.js --help
 ```
 
-Publishing or merging these source changes remains an owner decision. `npx
-splice` without this checkout resolves to the older registry package.
+Publishing this source package or merging the feature branch into `main` remains
+an owner decision. `npx splice` without this checkout resolves to the older
+registry package.
 
 ## Choose an input and result
 
