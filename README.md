@@ -1,45 +1,29 @@
 # 🫚 splice
 
-Splice is the intake and export edge of a corpus instrument: it turns social
-archives, conversation exports, OCR pages, and agent-session histories into
-material a person can inspect, navigate, select, and reuse without forgetting
-where it came from.
+Turn a Twitter/X archive into linked Markdown you can read in Obsidian, export
+conversations as training data, or search your old coding-agent sessions for a
+phrase you remember. Splice is a TypeScript CLI and library for getting material
+out of provider exports and into files you can use.
 
-Today those sources travel through several distinct paths—normalized social
-items, append-only Lync events, conversation Looms, and private search—and they
-do not all preserve the same structure or have the same release status.
-File-based imports stay local; Glowfic fetching and optional Bluesky enrichment
-make network requests. Keep the original archive as evidence.
+It also converts supported archives and OCR pages into Lync histories, preserving
+source identities and relationships for further work. Different commands retain
+different parts of the source; keep your original archives. File-based imports
+stay local. Glowfic fetching and optional Bluesky enrichment use the network.
 
-Splice began as a Python script and continues here as a TypeScript CLI and
-library. It has powered archive-derived projects including
+Splice began as a Python script. It has powered archive-derived projects including
 [deeperfates.com](https://deeperfates.com),
 [keltham.lol](https://keltham.lol), and
 [You Are the Assistant Now](https://youaretheassistantnow.com). The original
 essay, [Convert your Twitter archive into training data](https://deepfates.com/convert-your-twitter-archive-into-training-data),
 explains the practical need that gave the project its shape.
 
-## Availability: source checkout versus npm
+<a id="availability-source-checkout-versus-npm"></a>
 
-The npm `latest` release is 0.1.1 (verified 2026-09-06). It has the older social
-pipeline, requires Node.js 18+, and does **not** contain the current Lync,
-`twitter-markdown`, `session-import`, or `session-search` surfaces.
+## Get the source CLI
 
-The commands below describe source branch `codex/twitter-public-markdown-export`,
-whose documented product implementation is rooted at commit
-`e7ce97efccffa8951448dab18e772c6041aafb6c`. Its package metadata declares 0.4.0
-and Node.js 22+. This source is not an npm release or the default `main` branch.
-Uncommitted extensions, including provisional media/FiftyOne work when present,
-are outside the source surface documented here.
-
-The checkout pins `@deepfates/lync@0.4.3` to an exact source-built archive under
-`vendor/`; [its provenance record](vendor/LYNC-PROVENANCE.md) owns the source
-commit and checksum. On 2026-09-06, a clean exact-index checkout using Node.js
-22.23.2 completed `npm ci`, built Splice, and produced every artifact in the
-checked-in fixture exercise below. This proves the source checkout path, not an
-npm release of Splice or Lync.
-
-Install and inspect the source CLI with:
+Use Node.js 22+ in a checkout of `codex/twitter-public-markdown-export` for the
+commands below. This branch is not yet on `main` or npm. `npx splice` outside
+this checkout gets the older npm release, not these commands.
 
 ```sh
 npm ci
@@ -53,9 +37,9 @@ npm run build
 node dist/cli/splice.js --help
 ```
 
-Publishing this source package or merging the feature branch into `main` remains
-an owner decision. `npx splice` without this checkout resolves to the older
-registry package.
+The checkout includes a pinned source-built Lync dependency; no sibling Lync
+checkout is needed. See [source and release details](#source-and-release-details)
+for versions and provenance.
 
 ## Choose an input and result
 
@@ -71,7 +55,7 @@ registry package.
 In a source checkout, [the CLI reference](docs/cli.md) indexes these command
 families. Run the corresponding `--help` command for exact flags.
 
-## Social archive export
+## Read your Twitter/X writing as Markdown
 
 For an extracted Twitter/X archive, the narrow public-writing path creates one
 portable Markdown note per authored tweet, community tweet, nonempty Note Tweet,
@@ -177,8 +161,6 @@ prose contains no sensitive text.
   through one universal normalized type.
 - Bluesky media blobs are referenced but not downloaded by the social pipeline.
 - SQLite search is a rebuildable view, not a corpus authority.
-- Fixture and automated tests establish bounded mechanics, not compatibility
-  with every provider export or the usefulness of a personal corpus.
 
 In a source checkout, [Architecture](docs/architecture.md) describes ownership
 and recovery boundaries. Identity migration observations remain discoverable in
@@ -218,6 +200,25 @@ npm test
 
 See [CHANGELOG.md](CHANGELOG.md) for released and unreleased changes and
 `.tickets/` for bounded repository-owned work.
+
+### Source and release details
+
+The npm `latest` release is 0.1.1 (verified 2026-09-06). It requires Node.js 18+
+and has the older social pipeline, without the current Lync, `twitter-markdown`,
+`session-import`, or `session-search` commands.
+
+The source branch declares version 0.4.0 and Node.js 22+. Its documented product
+implementation is rooted at commit `e7ce97efccffa8951448dab18e772c6041aafb6c`.
+Uncommitted extensions, including provisional media/FiftyOne work when present,
+are not described here. Publishing this package or merging the feature branch
+into `main` remains an owner decision.
+
+`@deepfates/lync@0.4.3` is pinned to a source-built archive under `vendor/`;
+[its provenance record](vendor/LYNC-PROVENANCE.md) records the source commit and
+checksum. On 2026-09-06, a clean source checkout using Node.js 22.23.2 completed
+`npm ci`, built Splice, and produced every artifact in the checked-in fixture
+exercise above. Other provider exports may differ; inspect conversion reports
+and retain the source archive.
 
 ## License
 
