@@ -212,3 +212,27 @@ describe("write + verify round trip", () => {
     }
   });
 });
+
+describe("self-likes", () => {
+  it("mints a like under its own id and parents it to the liked tweet", () => {
+    const authored = tweet({ id: "42", source: "twitter:tweet" });
+    const liked = tweet({ id: "42", source: "twitter:like" });
+    const { events } = contentItemsToLyncEvents([authored, liked], OPTS);
+    expect(events).toHaveLength(2);
+    const [post, like] = events;
+    expect(like.id).not.toBe(post.id);
+    expect(like.kind).toBe("twitter/like");
+    expect(like.parents).toEqual([post.id]);
+    expect(post.parents).toEqual([]);
+  });
+});
+
+describe("decodeTwitterEntities", () => {
+  it("decodes the escapes Twitter archives use and nothing else", async () => {
+    const { decodeTwitterEntities } = await import("../../src/transforms/core.js");
+    expect(decodeTwitterEntities("&gt; quote &amp; &lt;tag&gt; &quot;x&quot; it&#39;s")).toBe(
+      "> quote & <tag> \"x\" it's",
+    );
+    expect(decodeTwitterEntities("a &nbsp; b")).toBe("a &nbsp; b");
+  });
+});

@@ -315,6 +315,7 @@ export function usage(): string {
     '  splice --glowfic https://glowfic.com/boards/215 --out ./out --format oai --assistant-regex "carissa"',
     "  splice --glowfic-board https://glowfic.com/boards/215 --out ./out --all-characters --min-posts 20",
     "  splice lync archive --source ./archive --out ./out/twitter.lync",
+    "  splice twitter-markdown --source ./archive --out ./twitter-markdown",
     "",
     "Docs: https://github.com/deepfates/splice • Context: https://deepfates.com/convert-your-twitter-archive-into-training-data",
   ].join("\n");

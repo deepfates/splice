@@ -1,43 +1,179 @@
 # 🫚 splice
 
-Convert social, chat, agent-session, and OCR archives into inspectable threads,
-append-only Lync histories, readable Markdown, and training data. Splice is a
-modular TypeScript CLI and library with explicit sources → transforms → outputs.
+Turn a Twitter/X archive into linked Markdown you can read in Obsidian, export
+conversations as training data, or search your old coding-agent sessions for a
+phrase you remember. Splice is a TypeScript CLI and library for getting material
+out of provider exports and into files you can use.
 
-- Idiomatic CLI (clig.dev principles)
-- Modular architecture:
-  - sources: Twitter/X archives, Bluesky repo CAR exports, Glowfic, ChatGPT,
-    Claude.ai, Codex, Claude Code, OCR page sets, tweet-embed caches, and raw Lync
-  - transforms: filtering, grouping into threads/conversations, text cleaning
-  - outputs: Markdown, OAI JSONL, JSONL (normalized items), ShareGPT
-- Library API to compose your own pipeline or plug in proprietary adapters
-- Copies referenced media into an images/ folder
-- JSONL artifacts for easy inspection and future checkpointing
+It also converts supported archives and OCR pages into Lync histories, preserving
+source identities and relationships for further work. Different commands retain
+different parts of the source; keep your original archives. File-based imports
+stay local. Glowfic fetching and optional Bluesky enrichment use the network.
 
-## Why
+Splice began as a Python script. It has powered archive-derived projects including
+[deeperfates.com](https://deeperfates.com),
+[keltham.lol](https://keltham.lol), and
+[You Are the Assistant Now](https://youaretheassistantnow.com). The original
+essay, [Convert your Twitter archive into training data](https://deepfates.com/convert-your-twitter-archive-into-training-data),
+explains the practical need that gave the project its shape.
 
-Turn your archives into:
-- Readable Markdown
-- OAI-compatible JSONL for training/eval
-- A normalized JSONL dump for inspection and reuse
+<a id="availability-source-checkout-versus-npm"></a>
 
-Today it supports:
+## Get the source CLI
 
-- **Twitter/X** — Local archive exports (ZIP extracted)
-- **Bluesky** — AT Protocol CAR file exports with optional API enrichment
-- **Glowfic** — Collaborative fiction threads, sections, or boards via URL
-- **ChatGPT and Claude.ai** — Exported conversation graphs as real branching Lync looms
-- **Codex and Claude Code** — Deterministic private session-tree intake and local search
-- **OCR page sets and tweet-embed caches** — Deterministic raw Lync importers
-- **Raw Lync** — Verification, readable projection, and SFT/preference export without reminting source identity
+Use Node.js 22+ in a checkout of `codex/twitter-public-markdown-export` for the
+commands below. This branch is not yet on `main` or npm. `npx splice` outside
+this checkout gets the older npm release, not these commands.
 
-The `@deepfates/splice/browser` export also provides a filesystem-free Twitter
-archive adapter for local applications. It accepts decoded members from an
-extracted archive or ZIP and returns one deterministic conversation loom: a
-visible corpus root, held reply threads, reviewable likes/retweets, exact source
-record IDs, and complete malformed/unresolved-parent accounting. It performs no
-I/O, network requests, or logging; the host application owns private file
-selection and persistence.
+```sh
+npm ci
+npx tsx splice.ts --help
+```
+
+Build and invoke the same source CLI with:
+
+```sh
+npm run build
+node dist/cli/splice.js --help
+```
+
+The checkout includes a pinned source-built Lync dependency; no sibling Lync
+checkout is needed. See [source and release details](#source-and-release-details)
+for versions and provenance.
+
+## Choose an input and result
+
+| Source | Command family | Result | Scope |
+| --- | --- | --- | --- |
+| Extracted Twitter/X archive | `twitter-markdown` | Linked public-writing Markdown | Local; feature branch |
+| Twitter/X archive or Bluesky CAR | main CLI | Markdown and dataset exports via `ContentItem` | Local unless Bluesky `--enrich` |
+| Live Glowfic URL or board | main CLI | Character-oriented dataset exports | Network fetch |
+| Twitter/X archive, Bluesky CAR, Glowfic JSON, OCR pages, or tweet cache | `lync` raw converters | Verified `.lync` events | Local files |
+| Claude Code session, Claude.ai/ChatGPT export, or Twitter threads | `lync` Loom converters | `.loom.json` snapshot(s), not raw `.lync` | Local files |
+| Codex or Claude Code session tree | `session-import`, then `session-search` | Private Lync tree and disposable local search | Local files |
+
+In a source checkout, [the CLI reference](docs/cli.md) indexes these command
+families. Run the corresponding `--help` command for exact flags.
+
+## Read your Twitter/X writing as Markdown
+
+For an extracted Twitter/X archive, the narrow public-writing path creates one
+portable Markdown note per authored tweet, community tweet, nonempty Note Tweet,
+or published Article. It excludes standalone likes and private archive areas;
+liked-post text is used only to recover missing reply context.
+
+```sh
+npx tsx splice.ts twitter-markdown \
+  --source ~/Downloads/twitter-archive \
+  --out ~/Downloads/twitter-markdown
+```
+
+The output directory must be new. Splice publishes it only after notes, media,
+README, and accounting report succeed. Use `--dry-run` to inspect reconciliation
+without writing, or `--no-media` for text only. The command reads an extracted
+directory; it neither extracts nor uploads the ZIP.
+
+The older normalized pipeline accepts a Twitter/X directory, Bluesky CAR, or
+Glowfic URL and writes Markdown, OAI JSONL, normalized JSONL, or ShareGPT. This
+checked-in fixture is the smallest local exercise:
+
+```sh
+npm run start -- \
+  --source tests/integration/fixtures/archive \
+  --out ./out
+```
+
+Bluesky `--enrich` and Glowfic URL ingestion use the network; ordinary archive
+file conversion is local. The normalized pipeline is not a lossless interchange
+format: source-specific fields remain in the original archive.
+
+For the checked-in fixture, success includes:
+
+```text
+out/threads/20250101/Top_tweet_with_link_httpstcoabc123.md
+out/conversations_oai.jsonl
+out/normalized_items.jsonl
+out/.splice/checkpoints/<checkpoint-id>.json
+out/.splice/objects/<content-hash>.json|jsonl
+```
+
+The `.splice` directory is rebuildable checkpoint state. Keep it when run
+provenance matters; the human- and model-facing exports do not depend on it
+after the run finishes.
+
+## Lync corpus conversion
+
+Create a verified Lync history from a Twitter/X archive or Bluesky CAR:
+
+```sh
+npx tsx splice.ts lync archive \
+  --source ~/Downloads/twitter-archive \
+  --out ./out/twitter.lync
+```
+
+Other raw-event converters accept `glowfic-dl` JSON, an OCR page set, or cached
+tweet embeds. Each reports emitted records, explicit skips, timestamp fallbacks,
+and verification counts as JSON. Every written line must be accepted by
+`@deepfates/lync`.
+
+Project a Lync union without reminting source identities:
+
+```sh
+npx tsx splice.ts lync markdown --source ./out/twitter.lync --out ./out/twitter.md
+npx tsx splice.ts lync training --source ./out/twitter.lync --out-dir ./out/training --render messages
+```
+
+The raw-event commands and the Loom commands are siblings under `splice lync`;
+Loom conversion is not a projection from the `.lync` produced above.
+
+## Private agent-session intake and search
+
+Convert complete Codex or Claude Code trees into a separate private Lync tree:
+
+```sh
+npx tsx splice.ts session-import codex --source ~/.codex/sessions --out ./private-lync/codex
+npx tsx splice.ts session-import claude --source ~/.claude/projects --out ./private-lync/claude
+```
+
+The trees must not overlap. Raw JSONL remains authoritative; generated Lync is
+deterministic normalization. On POSIX, importer-created directories are mode
+0700 and files are mode 0600.
+
+Build and query the disposable search projection:
+
+```sh
+npx tsx splice.ts session-search rebuild --source ./private-lync --out ./private-search
+npx tsx splice.ts session-search find --index ./private-search --query "literal phrase"
+```
+
+Search requires `sqlite3` with FTS5 and queries of at least three characters.
+Only user and assistant message text is indexed; system/developer prompts,
+reasoning, tool calls and results, and sidecars are excluded. Hits include
+source coordinates and native `codex resume` or `claude --resume` arguments.
+This filter separates record kinds; it cannot guarantee that user or assistant
+prose contains no sensitive text.
+
+## Boundaries and present limits
+
+- Keep the original archive for source-specific fields, provenance, and re-import.
+- The common social pipeline, Twitter writing exporter, Lync converters, Loom
+  exporters, and session intake are distinct routes; not every source passes
+  through one universal normalized type.
+- Bluesky media blobs are referenced but not downloaded by the social pipeline.
+- SQLite search is a rebuildable view, not a corpus authority.
+
+In a source checkout, [Architecture](docs/architecture.md) describes ownership
+and recovery boundaries. Identity migration observations remain discoverable in
+the dated reports under `reports/`.
+
+## Library entry points
+
+`@deepfates/splice` exports Node-oriented adapters, transforms, Lync mappers,
+projections, and writers. `@deepfates/splice/browser` exports a filesystem-free
+Twitter adapter for applications that already own decoded archive members. The
+browser adapter performs no I/O, network requests, or logging; its host owns
+private file selection and persistence. Exact exports live in `src/index.ts`
+and `src/browser.ts`.
 
 ```ts
 import { twitterArchiveEntriesToConversation } from "@deepfates/splice/browser";
@@ -50,527 +186,40 @@ const { snapshot, stats } = await twitterArchiveEntriesToConversation([
 ]);
 ```
 
-The adapter parses Twitter's JavaScript-wrapped JSON as data with JSON5; it
-never evaluates archive JavaScript. Media members are deliberately outside
-this text-review contract. Its syncable Loom contains exact readable text plus
-explicit record/parent/kind/actor/time provenance, not arbitrary provider
-fields; the original archive remains authoritative for data outside that
-projection.
-
-Reddit and Hugging Face dataset adapters remain future work.
-
-This library started life as a Python script. This is a TypeScript rewrite where development will continue. It has powered projects like [deeperfates.com](https://deeperfates.com), [keltham.lol](https://keltham.lol), and [youaretheassistantnow.com](https://youaretheassistantnow.com).
-
-More context: https://deepfates.com/convert-your-twitter-archive-into-training-data
-
-## Quick start (CLI)
-
-Requirements:
-- Node.js 22+
-- For direct execution: `tsx` (installed automatically with `npx`)
-
-Run with tsx (no build needed):
-
-    npx tsx splice.ts --source /path/to/twitter-archive --out ./out
-
-Run the published CLI (after install):
-
-    npx splice --source /path/to/twitter-archive --out ./out
-
-The source checkout is the 0.4.0 release candidate and targets
-`@deepfates/lync` 0.4.0. The npm package remains at 0.1.1. Use the source
-checkout for the Lync, session-import, and session-search commands documented
-below; do not assume the older published CLI contains them.
-
-Build then run with Node:
-
-    npm install
-    npm run build
-    node dist/cli/splice.js --source /path/to/twitter-archive --out ./out
-
-Dev/watch mode:
-
-    npm run dev -- --source /path/to/twitter-archive --out ./out
-
-Try the checked-in fixture archive:
-
-    npm install
-    npm run start -- --source tests/integration/fixtures/archive --out ./out
-
-## Usage
-
-Help (equivalent to `--help`):
-
-    splice — convert a Twitter archive to Markdown, OAI JSONL, and/or JSON
-
-    Usage:
-      splice --source <path> --out <dir> [--format markdown oai json sharegpt] [--system-message <text>]
-             [--since <iso>] [--until <iso>] [--min-length <n>] [--exclude-rt] [--only-threads] [--with-media]
-             [--enrich] [--dry-run] [--stats-json] [--log-level <level>] [--json-stdout] [--quiet|-q] [--verbose] [--version|-V]
-
-      splice --glowfic <url> --out <dir> --assistant <name> [--assistant-regex <pattern>]
-      splice --glowfic-board <url> --out <dir> --all-characters [--min-posts <n>]
-      splice lync <command> [options]   (see "lync output" below)
-
-    Options:
-      --source <path>            Path to Twitter archive directory or Bluesky .car file
-      --out <dir>                Output directory
-      --format <fmt...>          One or more formats: markdown, oai, json, sharegpt (default: markdown oai json)
-      --system-message <text>    System message for OAI JSONL (default: "You have been uploaded to the internet")
-                                 Alias: --system
-      --since <iso>              Include items on/after this ISO date
-      --until <iso>              Include items on/before this ISO date
-      --min-length <n>           Minimum text length
-      --exclude-rt               Exclude retweets (RT ...)
-      --only-threads             Output threads only
-      --with-media               Only include items that have media
-      --enrich                   Fetch thread context from API (Bluesky only)
-      --dry-run, -n              Plan only; don't write files
-      --stats-json               Write a stats.json summary
-      --log-level <level>        debug|info|warn|error (default: info)
-      --json-stdout              Emit normalized items JSONL to stdout; logs to stderr
-      --quiet, -q                Errors only
-      --verbose                  Debug logging
-      --version, -V              Show version
-      --help, -h                 Show help
-
-    Glowfic Options:
-      --glowfic <url>            Glowfic thread/section/board URL to ingest
-      --assistant <name>         Character name for assistant role (case-insensitive)
-      --assistant-regex <pat>    Regex pattern for assistant matching
-      --glowfic-board <url>      Board URL for multi-character export
-      --all-characters           Export datasets for all characters on board
-      --min-posts <n>            Minimum posts for character inclusion (default: 10)
-
-    Environment:
-      SPLICE_SYSTEM_MESSAGE      Alternative way to set the OAI system message
-                                 (flag value takes precedence)
-
-Exit codes:
-- 0: success
-- 1: runtime error
-- 2: invalid arguments or source detection failed
-
-Stdout/Stderr:
-- Primary logs go to stderr (so you can safely pipe stdout)
-- Data files are written to the output directory
-
-## Examples
-
-Convert to both Markdown and OAI JSONL:
-
-    npx tsx splice.ts --source ~/Downloads/my-twitter-archive --out ./out
-
-Markdown only:
-
-    npx tsx splice.ts --source ~/Downloads/my-twitter-archive --out ./out --format markdown
-
-OAI only with custom system message:
-
-    npx tsx splice.ts --source ~/Downloads/my-twitter-archive --out ./out --format oai --system-message "You are helpful."
-
-JSON only (normalized items):
-
-    npx tsx splice.ts --source ~/Downloads/my-twitter-archive --out ./out --format json
-
-All formats:
-
-    npx tsx splice.ts --source ~/Downloads/my-twitter-archive --out ./out --format markdown oai json sharegpt
-
-Filters and selection:
-
-    npx tsx splice.ts --source ~/Downloads/my-twitter-archive --out ./out --format markdown --since 2024-01-01 --until 2024-12-31 --min-length 40 --exclude-rt --only-threads --with-media
-
-Stats JSON summary:
-
-    npx tsx splice.ts --source ~/Downloads/my-twitter-archive --out ./out --format oai --stats-json
-
-Stream normalized items to stdout:
-
-    npx tsx splice.ts --source ~/Downloads/my-twitter-archive --out ./out --json-stdout | head -n 5
-
-Use environment variable for system message:
-
-    SPLICE_SYSTEM_MESSAGE="Be concise." npx tsx splice.ts --source ~/Downloads/my-twitter-archive --out ./out --format oai
-
-Dry run with debug logs (no files written):
-
-    npx tsx splice.ts --source ~/Downloads/my-twitter-archive --out ./out --dry-run --log-level debug
-
-Bluesky CAR export:
-
-    npx tsx splice.ts --source ~/Downloads/my-bsky-repo.car --out ./out
-
-Bluesky with thread context enrichment (fetches parent posts from API):
-
-    npx tsx splice.ts --source ~/Downloads/my-bsky-repo.car --out ./out --enrich
-
-Glowfic thread (single character as assistant):
-
-    npx tsx splice.ts --glowfic https://glowfic.com/posts/5506 --out ./out --assistant "Carissa"
-
-Glowfic board (all characters, HuggingFace dataset format):
-
-    npx tsx splice.ts --glowfic-board https://glowfic.com/boards/215 --out ./out --all-characters --min-posts 20
-
-## lync output (CLI)
-
-`splice lync <command>` converts archives into append-only `.lync` event files
-(the lync FORMAT.md envelope). Every command writes the file, re-verifies it
-with @deepfates/lync (every line must classify `accepted`), and prints the full
-stats block — emitted/skipped counts with per-record reasons, timestamp
-fallbacks, verify counts — as JSON to stdout. Logs stay on stderr. Nothing is
-dropped silently.
-
-Commands:
-
-    splice lync archive     --source <twitter-dir|bsky.car>  --out <file.lync>
-    splice lync glowfic     --source <thread.json>           --out <file.lync>
-    splice lync ocr         --source <page-set-dir>          --out <file.lync>
-    splice lync tweet-embed --source <embed-cache-dir>       --out <file.lync>
-
-- `archive` — a Twitter archive directory or Bluesky `.car` file (same
-  detection as the main pipeline) → one event per normalized item
-  (`twitter/tweet`, `twitter/like`, …), reply links preserved as parents.
-- `glowfic` — a glowfic-dl JSON export (`thread.json`) → one `glowfic/thread`
-  event plus one `glowfic/post` per post, chained in post order.
-- `ocr` — a directory of OCR pages (`page-NNN.txt`, optional
-  `page-NNN.desc.txt` sidecars, combined `*.md`) → `ocr/set`, `ocr/page`,
-  `ocr/document` events. `--set-locator <name>` pins the id-stable set
-  identity (default: directory basename). For a portable archive, also pass a
-  non-filesystem `--source-ref` such as `archive://signal-ocr`; no physical
-  source directory is then carried in the emitted events.
-- `tweet-embed` — a directory of cached oEmbed responses
-  (`<tweetid>-light.json`) → `twitter/tweet-embed` events. Pass
-  `--archive-ids-file <path>` (JSON array or one id per line) to parent
-  matched embeds to their canonical archive tweet events.
-
-Common options: `--operator`, `--via`, `--source-ref` (author envelope
-overrides), `--marked-at <rfc3339>` (record import time; opt-in because
-omitting it keeps re-runs byte-identical so lync unions them as duplicates),
-`--dry-run`, `--quiet`, `--verbose`, `--log-level`. Unknown flags are hard
-errors (exit 2), not warnings. See `splice lync --help`.
-
-Examples:
-
-    npx tsx splice.ts lync archive --source ~/Downloads/my-twitter-archive --out ./out/twitter.lync
-    npx tsx splice.ts lync glowfic --source tests/fixtures/glowfic-export/thread.json --out ./out/thread-5506.lync
-    npx tsx splice.ts lync ocr --source ../deep-space/data/signal-ocr --source-ref archive://signal-ocr --set-locator signal-ocr --out ./out/signal-ocr.lync
-    npx tsx splice.ts lync tweet-embed --source ../deep-space/.embed-cache/tweets --out ./out/embeds.lync
-
-### OCR portable identity and legacy cutover
-
-Current OCR events use identity scheme `splice/ocr-portable-v2`. The scheme is
-part of every set/page/document UUID recipe, is declared as
-`payload.identity_scheme` on the `ocr/set`, and is reported in conversion
-stats. The set payload does not carry the scanned directory. With an explicit
-portable `--source-ref`, neither the `.lync` output nor raw-Lync Markdown
-contains the physical checkout path; the path is used only to read local input.
-
-OCR files produced before this cutover used unversioned ids derived from
-`("ocr", "set|page|document", setLocator, ...)`, identified the default
-importer as `splice/ocr-text-import@0.1`, and included `ocr/set.payload.dir`.
-Changing that body under the old ids would create same-id conflicts, so v2
-mints a disjoint graph and identifies the default importer as
-`splice/ocr-text-import-portable@0.1`. Regenerate and replace a legacy OCR
-archive when possible. If legacy and v2 files are unioned, Lync can retain both
-without conflicts, but they are two representations of the same source—not two
-independent observations. Keep `--set-locator` and `--source-ref` stable across
-reruns; identical inputs and options remain byte-identical.
-
-Projection commands read one or more raw event files without rewriting them:
-
-    splice lync markdown --source <file.lync> --out <file.md>
-    splice lync training --source <file.lync> --out-dir <dir> [--render plain|messages]
-
-`markdown` renders the selected main path and nearby alternatives. `training`
-writes attributed SFT and preference JSONL plus a complete accounting report.
-Both use Lync's exact kind/profile presentation contract: current Twitter,
-Bluesky, Glowfic, tweet-embed, OCR, structured-message, and ratified Behold
-payloads share one allowlisted reader. Training accepts only presented content;
-Markdown may also name structural containers. Unknown payloads are not searched
-recursively, while unknown non-text events remain visible as JSON in Markdown.
-Source IDs, ordered parents, suppression, `no-train`, and the export drop report
-remain unchanged.
-Exit codes match the main CLI: 0 success, 1 runtime/verify error, 2 usage
-error. Run `splice lync --help` for the full converter and projection surface.
-
-### Agent-session importer identity and cutover
-
-Convert a complete Codex or Claude Code session tree with the direct private
-intake commands:
+The adapter parses Twitter's JavaScript-wrapped JSON as data rather than
+evaluating it. It returns a deterministic conversation Loom with readable text,
+reply relationships, source coordinates, and malformed/unresolved accounting.
+Media bytes and arbitrary provider fields remain outside this browser contract.
+
+## Development and evidence
 
 ```sh
-splice session-import codex --source ~/.codex/sessions --out ./private-lync/codex
-splice session-import claude --source ~/.claude/projects --out ./private-lync/claude
+npm run build
+npm test
 ```
 
-The source and output trees must not overlap. The JSON report names every
-converted JSONL file, every unreadable JSONL file, and every ignored non-JSONL
-entry. Any unreadable source makes the command exit nonzero after it prints the
-partial accounting report. Raw session JSONL remains authority; the generated
-lync tree is a deterministic, rebuildable normalization. Codex journals from
-before the current `{timestamp,type,payload}` envelope are preserved as
-top-level logical payloads rather than losing their role and message content.
-
-The Codex and Claude Code tree importers use the explicit deterministic-id
-schema `splice-session-tree/v1`. A source file's identity is its normalized,
-root-relative path under the selected archive root, prefixed by that schema;
-the physical location of the copied archive is not identity. Human-readable
-`author.source` and payload paths remain root-relative. A breaking locator or
-id change must introduce a new schema value rather than silently reusing v1.
-
-Claude UUID-bearing records additionally use the repeat identity recipe
-`splice-claude-repeat/v2`. Real subagent and compaction journals can repeat one
-UUID within a file or copy it across files. The first occurrence in the
-byte-sorted tree remains the canonical UUID-derived `claude/<type>` event.
-Later byte-identical occurrences become deterministic, line-scoped
-`lore/pointer` events targeting it; differing occurrences become
-`lore/annotation` events that retain the complete source record and target the
-same canonical event. This preserves every physical occurrence without
-weakening same-id conflict verification or breaking `parentUuid` lineage.
-V1 output from an interrupted Claude import must be regenerated from raw JSONL
-before use; Codex identities are unchanged.
-
-The earlier basename-only tree-import behavior never produced importer output
-found in the v1-cutover audit of this workstation's home directory (excluding
-macOS's system-managed `Library` tree): no `.lync` event was attributed to
-`splice/codex-session` or `splice/claude-session`. It is therefore treated as
-disposable pre-release output, not a migration source. If such generated files
-exist elsewhere, delete them and regenerate from the original JSONL archive
-with v1; do not union basename-era files with v1 output because their derived
-ids belong to a different, unversioned identity scheme.
-
-Session output files are mode 0600 and importer-created directories are 0700
-on POSIX. Windows does not expose equivalent POSIX mode guarantees. Repeated
-conversion replaces the generated file on every platform; replacement is
-atomic on POSIX, while Windows may briefly remove the old destination before
-renaming the verified staged file into place.
-
-### Private session search projection
-
-`splice session-search rebuild` builds a disposable SQLite FTS5 projection
-over a tree of Splice-produced Codex and Claude Code `.lync` files;
-`splice session-search find` performs literal, case-sensitive searches. The
-lync files remain authority. Rebuilds walk byte-sorted root-relative paths,
-stream bounded batches through one transaction, and report a deterministic
-manifest with per-file digests and reconciled counts.
-
-Privacy is structural rather than a query-time convention. Only user and
-assistant message text enters the database. System/developer prompts,
-reasoning, tool calls and results, and session sidecars are never copied into
-the projection. Hits contain stable source path/line/event coordinates and an
-argument vector for the source-native resume command (`codex resume
-<session-id>` or `claude --resume <session-id>`). Projection directories are
-0700 and the database and manifest are 0600 on POSIX.
-
-Rebuilds publish immutable generations beneath a stable private projection
-directory and atomically replace its `CURRENT` pointer. A fail-fast lock
-rejects concurrent writers to the same projection; a failed controlled rebuild
-leaves the prior generation current. `find` opens the selected database
-read-only, preflights its schema, uses case-sensitive FTS5 trigram candidates,
-then verifies each hit with exact `instr`. Queries must be at least three
-characters. Published generations are not deleted during rebuild, so readers
-that already resolved an older `CURRENT` remain valid; generation garbage
-collection is an explicit future/manual maintenance action.
-
-Generation publication copies the completed database and manifest into a new,
-unpointed private generation and verifies both before updating `CURRENT`; it
-does not depend on renaming a populated directory. POSIX replaces `CURRENT`
-atomically. Windows cannot atomically rename over an existing file, so repeat
-publication uses a recoverable pointer-to-backup swap with a brief interval in
-which a new reader may need to retry; already-resolved generation readers are
-unaffected.
-
-Each source file is copied into a private immutable staging snapshot before it
-is verified, hashed, or indexed. Lync's streaming parser must accept every
-line, and a disk-backed union check rejects the same event id with different
-body bytes across files. Thus the per-file manifest digest covers the exact
-bytes indexed even if the authority file changes during a rebuild; identical
-duplicates retain normal lync union-as-no-op semantics. The manifest separates
-source message segments from unique projected rows and reports identities
-seen, unique identities, and identical duplicates. Rebuild preflight requires
-SQLite to honor `PRAGMA temp_store=FILE`; the union identity table therefore
-does not grow in process memory.
-
-The implementation invokes a `sqlite3` executable with FTS5 enabled (macOS's
-system SQLite satisfies this) and deliberately adds no native Node dependency.
-Callers on other platforms must provide such an executable, optionally through
-the `sqliteBinary` option or `SPLICE_SQLITE3` for the CLI.
-
-```ts
-import {
-  rebuildSessionSearchIndex,
-  searchSessionIndex,
-} from "@deepfates/splice";
-
-const built = await rebuildSessionSearchIndex("./session-lync", "./search");
-const hits = await searchSessionIndex(built.indexPath, "literal phrase");
-```
-
-Or use the direct JSON CLI surface:
-
-```sh
-splice session-search rebuild --source ./session-lync --out ./private-search
-splice session-search find --index ./private-search --query "literal phrase"
-```
-
-## Sources
-
-### Twitter/X
-
-Extract the archive ZIP to a directory containing:
-
-- `data/manifest.js`
-- `data/tweets_media/` (optional, for media assets)
-- YTD `.js` files for `tweets` and `like` data
-
-We ingest tweets, likes, and media files prefixed with `<tweetId>-*`.
-
-For a tiny copy-pasteable example, use the fixture at `tests/integration/fixtures/archive/`:
-
-    npm run start -- --source tests/integration/fixtures/archive --out ./out
-
-### Bluesky
-
-Export your repository from Settings → Advanced → Export Content. Pass `--source path/to/repo.car`.
-
-- Use `--enrich` to fetch parent posts from the public API for full conversation context
-- Media blobs are referenced but not downloaded yet
-
-### Glowfic
-
-Pass a thread, section, or board URL: `--glowfic https://glowfic.com/posts/5506`
-
-- Requires `--assistant <name>` to specify which character is the assistant
-- For multi-character datasets: `--glowfic-board <url> --all-characters`
-## Output layout
-
-By default (`--format markdown oai json`), a successful run writes:
-
-- `out/threads/YYYYMMDD/` — one Markdown file per detected multi-post thread, named like `<slug>.md`
-- `out/tweets/` — directory for one Markdown file per non-thread self-authored post, named like `<slug>.md`; in the fixture run this directory is empty and has no dated child directory
-- `out/images/` — copied media files referenced by the Markdown
-- `out/conversations_oai.jsonl` — OAI JSONL file with conversations built from threads and reply chains
-- `out/normalized_items.jsonl` — JSONL dump of normalized ContentItem records (one item per line)
-- `out/.splice/objects/<sha256>.json|jsonl` — content-addressed intermediate artifacts used by checkpoint manifests
-- `out/.splice/checkpoints/<checkpoint-id>.json` — pipeline checkpoint manifest for the run
-
-The checked-in fixture command above creates this output tree:
-
-```text
-out
-out/normalized_items.jsonl
-out/images
-out/tweets
-out/threads
-out/threads/20250101
-out/threads/20250101/Top_tweet_with_link_httpstcoabc123.md
-out/.splice
-out/.splice/checkpoints
-out/.splice/checkpoints/<checkpoint-id>.json
-out/.splice/objects
-out/.splice/objects/<sha256>.json
-out/.splice/objects/<sha256>.jsonl
-out/conversations_oai.jsonl
-```
-
-Opt-in files:
-
-- `out/sharegpt.json` — ShareGPT export when you include `--format sharegpt`
-- `out/stats.json` — summary (counts, threads/conversations, date range) when you pass `--stats-json`
-
-Notes:
-- Thread filenames are derived from the top post’s first words (sanitized).
-- The OAI JSONL file includes a top-level “system” message (configurable).
-- The `.splice/` store is safe to delete if you only need the exported files; keep it if you want checkpoint provenance or future resumable workflows.
-
-## Architecture (for contributors)
-
-- src/core — shared types, arg parsing, logger, utilities
-- src/sources — input adapters (twitter.ts)
-- src/transforms — filters, grouping, conversation mapping
-- src/outputs — writers for markdown/oai/json/sharegpt/stats
-- src/cli — CLI entrypoint wiring sources → transforms → outputs
-
-The code is structured so you can add new sources, transforms, or outputs without touching unrelated parts.
-
-## Library usage
-
-You can import and compose pieces in your own app:
-
-```ts
-import {
-  ingestTwitter,
-  applyFilters,
-  indexById,
-  groupThreadsAndConversations,
-  writeOAI,
-} from "@deepfates/splice";
-
-const items = await ingestTwitter("/path/to/archive", (l, m) => console.error(`[${l}] ${m}`));
-const filtered = applyFilters(items, { minLength: 20, excludeRt: true, withMedia: false });
-const all = indexById(filtered);
-const { threads, conversations } = groupThreadsAndConversations(all);
-await writeOAI(threads, conversations, "./out", "You have been uploaded to the internet", (l, m) => console.error(`[${l}] ${m}`), false);
-```
-
-Pluggable adapters (build proprietary ones privately and upstream later if you want):
-
-- SourceAdapter: `detect(pathOrUri)`, `ingest(pathOrUri, logger) → ContentItem[]`
-- OutputAdapter: `write(args, ctx)` where args may include `items`, `threads`, `conversations`, `systemMessage`, and ctx provides `outDir`, `dryRun`, and `logger`
-
-## Development
-
-Install deps:
-
-    npm install
-
-Run with tsx:
-
-    npm run start -- --source /path/to/twitter-archive --out ./out
-
-Watch mode:
-
-    npm run dev -- --source /path/to/twitter-archive --out ./out
-
-Build (emits `dist/cli/splice.js` and sets up the `splice` bin; library API at `dist/index.js`):
-
-    npm run build
-
-Run the built CLI:
-
-    node dist/cli/splice.js --source /path/to/twitter-archive --out ./out
-
-## Testing
-
-Run the full test suite (includes integration tests for Markdown, OAI JSONL with system message, media copying, and normalized JSONL):
-
-    npm test
-
-Watch tests:
-
-    npm run test:watch
-
-## Roadmap (short)
-
-- More inputs: Reddit and Hugging Face datasets
-- Checkpointing and resumable pipelines (JSONL-based manifests)
-- More outputs: SQLite/Parquet/CSV
-- Blob fetching for Bluesky media
-- Better selection: persona/character filters, time ranges
-- Improved role attribution and metadata preservation
-
-## Work tracking
-
-Project-owned implementation work is tracked in `.tickets/`; run `tk list`
-from this repository to inspect it. Cross-project corpus coordination remains
-in the workshop root ledger.
+See [CHANGELOG.md](CHANGELOG.md) for released and unreleased changes and
+`.tickets/` for bounded repository-owned work.
+
+### Source and release details
+
+The npm `latest` release is 0.1.1 (verified 2026-09-06). It requires Node.js 18+
+and has the older social pipeline, without the current Lync, `twitter-markdown`,
+`session-import`, or `session-search` commands.
+
+The source branch declares version 0.4.0 and Node.js 22+. Its documented product
+implementation is rooted at commit `e7ce97efccffa8951448dab18e772c6041aafb6c`.
+Uncommitted extensions, including provisional media/FiftyOne work when present,
+are not described here. Publishing this package or merging the feature branch
+into `main` remains an owner decision.
+
+`@deepfates/lync@0.4.3` is pinned to a source-built archive under `vendor/`;
+[its provenance record](vendor/LYNC-PROVENANCE.md) records the source commit and
+checksum. On 2026-09-06, a clean source checkout using Node.js 22.23.2 completed
+`npm ci`, built Splice, and produced every artifact in the checked-in fixture
+exercise above. Other provider exports may differ; inspect conversion reports
+and retain the source archive.
 
 ## License
 
-MIT. See `LICENSE`.
-
-## Acknowledgements
-
-See the blog post above for context. CLI UX follows clig.dev-style conventions.
+MIT. See [LICENSE](LICENSE).

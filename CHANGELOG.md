@@ -7,6 +7,20 @@ Dates are in YYYY-MM-DD.
 
 ## [Unreleased]
 
+- Added `splice twitter-markdown`, an atomic, collision-free public-writing
+  export for Obsidian and ordinary Markdown readers. Each authored tweet,
+  community tweet, Note Tweet, or published Article becomes a standalone note
+  with minimal source metadata, per-record media, and bidirectional links
+  between archived parents and children. Thread branches remain relationships
+  instead of being flattened into aggregate documents. Receipts live under
+  `.splice/`, with collision checks, atomic publication, and explicit accounting
+  for private or otherwise excluded archive categories.
+  Liked-post text is joined by tweet ID only when it recovers an otherwise
+  missing reply parent; unrelated likes remain absent from Markdown. Non-media
+  URL entities are preserved, excluded deleted records can supply honest parent
+  context, missing Article bodies are labeled, and media/path failures prevent
+  final publication rather than producing a broken vault.
+
 - Raw-Lync Markdown and training now consume
   `@deepfates/lync/presentation` instead of maintaining their own shallow text
   heuristics. Known source/profile contracts are allowlisted, source identity
@@ -25,10 +39,11 @@ Dates are in YYYY-MM-DD.
 - Syncable browser Looms carry readable text and explicit provenance without
   copying arbitrary unpresented provider fields from archive records.
 
-## [0.4.0] - Unpublished release candidate
+### 0.4.0 candidate baseline
 
-This release candidate targets `@deepfates/lync` 0.4.0 and Node.js 22 or newer.
-Registry publication remains sequenced after the Lync 0.4.0 publication.
+The current source candidate targets `@deepfates/lync` 0.4.0 and Node.js 22 or
+newer. It has not been published as `@deepfates/splice` 0.4.0; npm `latest`
+remains 0.1.1 as of 2026-09-06.
 
 ### Added
 - Deterministic raw Lync importers for Twitter archives, Glowfic, OCR page sets,
@@ -97,8 +112,6 @@ Registry publication remains sequenced after the Lync 0.4.0 publication.
 - JSON now included in default output formats
 
 [0.3.0]: https://github.com/deepfates/splice/compare/v0.2.0...v0.3.0
-
-[0.4.0]: https://github.com/deepfates/splice/compare/v0.3.0...HEAD
 
 [0.2.0]: https://github.com/deepfates/splice/compare/v0.1.2...v0.2.0
 

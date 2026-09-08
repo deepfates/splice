@@ -38,6 +38,7 @@ import { decisionsFromIds } from "../core/decisions.js";
 import { runLync } from "./lync.js";
 import { runSessionSearch } from "./session-search.js";
 import { runSessionImport } from "./session-import.js";
+import { runTwitterMarkdown } from "./twitter-markdown.js";
 
 /* -------------------------------- version -------------------------------- */
 
@@ -71,6 +72,10 @@ async function main() {
   }
   if (process.argv[2] === "session-import") {
     await runSessionImport(process.argv);
+    return;
+  }
+  if (process.argv[2] === "twitter-markdown") {
+    await runTwitterMarkdown(process.argv);
     return;
   }
 

@@ -9,6 +9,20 @@ import {
 const SELF_POST_SOURCES = new Set(["twitter:tweet", "bluesky:post"]);
 
 /**
+ * Twitter archives store tweet text HTML-escaped: `&gt;`, `&lt;`, `&amp;`
+ * (and occasionally `&quot;`/`&#39;`). Decode exactly those; nothing else
+ * in the text is markup.
+ */
+export function decodeTwitterEntities(text: string): string {
+  return text
+    .replace(/&gt;/g, ">")
+    .replace(/&lt;/g, "<")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+/**
  * Replace shortened URLs with expanded; strip t.co links, mentions, hashtags.
  * Preserve paragraph breaks; collapse intra-line spaces and trim.
  */
@@ -16,7 +30,7 @@ export function cleanText(
   text: string,
   entities?: { urls?: Array<{ url: string; expanded_url?: string }> },
 ): string {
-  let t = text ?? "";
+  let t = decodeTwitterEntities(text ?? "");
   if (entities?.urls) {
     for (const u of entities.urls) {
       if (u.url && u.expanded_url) t = t.split(u.url).join(u.expanded_url);
